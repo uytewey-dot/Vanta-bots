@@ -169,12 +169,179 @@ int main()
     Check(!Cadence.ShouldRelease(End - 0.01) && Cadence.ShouldRelease(End + 0.01),
         "automatic fire is held only for the selected burst");
     Cadence.Released(End + 0.01);
-    Check(!Cadence.Ready(End + 0.1) && Cadence.Ready(End + 0.22),
+    Check(!Cadence.Ready(End + 0.1) && Cadence.Ready(End + AutoFar.Release + 0.02),
         "a real trigger release gap separates automatic bursts");
     Check(!Cadence.Ready(NaN) && !Cadence.Ready(-1.) && Cadence.ShouldRelease(NaN),
         "invalid clock cannot keep firing or start a shot");
     Check(!Cadence.Pressed(3., { NaN, 0.1, 0.2, true }) &&
         !Cadence.Pressed(3., { 0.1, 0., 0.2, true }), "invalid trigger plans cannot start fire");
+
+    for (double Delta : { 1. / 20., 1. / 30., 1. / 60. })
+    {
+        Combat::AimFollower Follower;
+        Combat::Rotation Tracking{}, Baseline{};
+        double TrackedError = 0., BaselineError = 0.;
+        bool Safe = true;
+        for (int Frame = 1; Frame <= int(5. / Delta); ++Frame)
+        {
+            // Crossing runner observed by a strafing bot, with an abrupt reversal.
+            const double Time = Frame * Delta;
+            const double TargetY = Time < 2.5 ? Time * 800. : (5. - Time) * 800.;
+            const Combat::Vector Origin{ 0., std::sin(Time) * 200., 60. };
+            const Combat::Vector Body{ 1800., TargetY, 35. };
+            Combat::Rotation DesiredTracking, Next, Plain;
+            Safe &= Combat::LookAt(Origin, Body, DesiredTracking) &&
+                Follower.Update(Tracking, DesiredTracking, Delta, Next) &&
+                Combat::SmoothAim(Baseline, DesiredTracking, Delta, Plain);
+            Safe &= std::abs(Combat::NormalizeAngle(Next.Yaw - Tracking.Yaw)) <= 300. * Delta + 1e-8;
+            const double Before = Combat::NormalizeAngle(DesiredTracking.Yaw - Tracking.Yaw);
+            const double After = Combat::NormalizeAngle(DesiredTracking.Yaw - Next.Yaw);
+            Safe &= Before * After >= -1e-8; // No lead beyond current hitscan aim.
+            if (Time > 0.6)
+            {
+                TrackedError += std::abs(After);
+                BaselineError += std::abs(Combat::NormalizeAngle(DesiredTracking.Yaw - Plain.Yaw));
+            }
+            Tracking = Next;
+            Baseline = Plain;
+        }
+        Check(Safe && TrackedError < BaselineError * 0.3,
+            "motion feed-forward sharply reduces tracking lag without overshoot across tick rates");
+    }
+    Combat::AimFollower Follower;
+    Check(Follower.Update({ 0., 179. }, { 0., 179. }, 0.05, Result) &&
+        Follower.Update(Result, { 0., -179. }, 0.05, Result) && Near(Result.Yaw, -179.),
+        "angular tracking crosses yaw wrap without a false large turn");
+    Check(!Follower.Update(Result, { NaN, 0. }, 0.05, Result) && !Follower.HasPrevious,
+        "invalid tracking input discards angular history");
+    Follower.Reset();
+    Check(Follower.Update({}, { 0., 90. }, 0.05, Result) && Near(Result.Yaw, 15.),
+        "a fresh target cannot inherit previous angular velocity");
+
+    for (Combat::Vector Velocity : { Combat::Vector{ 0., 900., 0. },
+        Combat::Vector{ -500., 500., 100. }, Combat::Vector{ 500., -700., -200. } })
+    {
+        Combat::MotionTracker Intercept;
+        Intercept.Sample({ 1000. - Velocity.X * 0.05, -Velocity.Y * 0.05,
+            -Velocity.Z * 0.05 }, 1.);
+        Intercept.Sample({ 1000., 0., 0. }, 1.05);
+        const auto Point = Intercept.AimPoint({}, 10000.);
+        const double Time = Combat::Length(Point) / 10000.;
+        Check(Near(Point.X, 1000. + Velocity.X * Time, 1e-7) &&
+            Near(Point.Y, Velocity.Y * Time, 1e-7) && Near(Point.Z, Velocity.Z * Time, 1e-7),
+            "analytic intercept meets the target at actual projectile arrival time");
+    }
+    Combat::MotionTracker EqualSpeed;
+    EqualSpeed.Sample({ 200., 0., 0. }, 1.);
+    EqualSpeed.Sample({ 150., 0., 0. }, 1.05);
+    Check(Near(EqualSpeed.AimPoint({}, 1000.).X, 75.), "linear intercept handles equal closing speeds");
+    EqualSpeed.Sample({ 200., 0., 0. }, 1.10);
+    Check(Near(EqualSpeed.AimPoint({}, 1000.).X, 200.), "unreachable receding target has no imaginary intercept");
+
+    const auto Rifle = Combat::Profile(8000., 10000., false, 8.);
+    const auto Precision = Combat::Profile(10000., 15000., true, 1.);
+    const auto Short = Combat::Profile(8000., 2000., false, 2.);
+    Check(Near(Rifle.Range, 8000.) && Near(Short.Range, 1800.) && Short.Preferred < Rifle.Preferred,
+        "native reach limits engagement and close-range weapons choose a closer position");
+    Check(Precision.Precision && Precision.Reaction > Rifle.Reaction && Short.Reaction < Rifle.Reaction,
+        "weapon precision selects acquisition time");
+    for (double Invalid : { NaN, Infinity, -1., 0., Huge })
+        Check(Near(Combat::Profile(8000., Invalid, false, 8.).Range, 8000.),
+            "unknown or unbounded native range preserves the configured cap");
+    Check(Combat::Profile(NaN, 10000., false, 8.).Range == 500., "invalid range configuration has bounded fallback");
+
+    Combat::Maneuver Tactics;
+    Check(Tactics.Update(1., 7000., Rifle, false, 0).Forward > 0., "advance toward useful weapon range");
+    Check(Tactics.Update(1.05, Rifle.Preferred * 1.02, Rifle, false, 0).Forward > 0.,
+        "approach remains latched until the preferred distance");
+    Check(Tactics.Update(1.10, Rifle.Preferred, Rifle, false, 0).Forward == 0. &&
+        Tactics.Update(1.15, Rifle.Preferred * 1.04, Rifle, false, 0).Forward == 0.,
+        "small range noise does not cause forward oscillation");
+    Check(Tactics.Update(1.20, Rifle.Minimum * 0.9, Rifle, false, 0).Forward < 0. &&
+        Tactics.Update(1.25, Rifle.Minimum * 1.1, Rifle, false, 0).Forward < 0. &&
+        Tactics.Update(1.30, Rifle.Minimum * 1.3, Rifle, false, 0).Forward == 0.,
+        "retreat uses its own hysteresis band");
+    Check(std::abs(Tactics.Update(1.35, Rifle.Preferred, Rifle, true, 0).Strafe) > 0.5,
+        "reload creates an evasive maneuver");
+    Check(Tactics.Update(NaN, 1000., Rifle, false, 0).Strafe == 0. && Tactics.PreviousTime < 0.,
+        "invalid clock clears tactical motion");
+    Combat::ShotStability Settled;
+    Check(!Settled.Observe(true, 1., 0.09) && Settled.Observe(true, 1.10, 0.09),
+        "precision shots need sustained alignment");
+    Check(!Settled.Observe(false, 1.11, 0.09) && !Settled.Observe(true, 1.12, 0.09),
+        "recoil or movement resets the settling window");
+    Check(!Settled.Observe(true, 2., 0.09), "stale frames cannot reuse a settled aim");
+
+    Combat::Maneuver BlockedApproach;
+    int AdvanceFrames = 0, PlantFrames = 0;
+    for (int Tick = 0; Tick < 200; ++Tick)
+    {
+        const auto Move = BlockedApproach.Update(1. + Tick * 0.05, 7000., Rifle, false, 0);
+        AdvanceFrames += Move.Forward > 0.;
+        PlantFrames += Move.Forward == 0. && Move.Strafe == 0.;
+    }
+    Check(AdvanceFrames > 20 && PlantFrames > 50,
+        "blocked radial pursuit still schedules shooting windows inside weapon range");
+
+    for (double Delta : { 1. / 20., 1. / 30., 1. / 60. })
+    {
+        // Integrate native-like acceleration/friction while tactics alternate
+        // repositioning and planted precision shots. This catches starvation of
+        // the fire window and bursts that continue into movement or occlusion.
+        Combat::Maneuver MotionPlan;
+        Combat::ShotStability Plant;
+        Combat::AimWindow Visibility;
+        Combat::AimFollower Tracking;
+        Combat::TriggerCadence Trigger;
+        Combat::MotionTracker Shooter;
+        Combat::Vector Position{};
+        Combat::Rotation Facing{};
+        double Velocity = 0.;
+        bool Held = false, Safe = true;
+        int Bursts = 0, MovingFrames = 0, DirectionChanges = 0;
+        double LastDirection = 0.;
+        for (int Frame = 1; Frame <= int(12. / Delta); ++Frame)
+        {
+            const double Now = Frame * Delta;
+            const auto Move = MotionPlan.Update(Now, Precision.Preferred, Precision, false, 0);
+            Velocity += (Move.Strafe * 600. - Velocity) * (1. - std::exp(-10. * Delta));
+            Position.Y += Velocity * Delta;
+            Shooter.Sample(Position, Now);
+            if (Move.Strafe != 0.)
+            {
+                ++MovingFrames;
+                if (LastDirection != 0. && LastDirection * Move.Strafe < 0.)
+                    ++DirectionChanges;
+                LastDirection = Move.Strafe;
+            }
+            const bool Visible = !(Now > 5. && Now < 5.6);
+            const double AimDelta = Visibility.Observe(Visible, Now);
+            Combat::Rotation Look, Next;
+            const Combat::Vector Target{ Precision.Preferred, std::sin(Now * 0.6) * 300., 0. };
+            const bool Aligned = Combat::LookAt(Position, Target, Look) &&
+                Tracking.Update(Facing, Look, AimDelta, Next) &&
+                Combat::Aligned(Next, Look, Combat::Length(Combat::Difference(Target, Position)));
+            if (AimDelta > 0.)
+                Facing = Next;
+            const bool Stable = Plant.Observe(Visible && Aligned && Move.Strafe == 0. &&
+                Shooter.HasVelocity && std::abs(Shooter.Velocity.Y) <= 110., Now, 0.09);
+            const bool FireAllowed = Stable && Visibility.Ready(Now, Precision.Reaction);
+            if (Held && (!FireAllowed || Trigger.ShouldRelease(Now)))
+            {
+                Held = false;
+                Trigger.Released(Now);
+            }
+            if (!Held && FireAllowed && Trigger.Ready(Now))
+            {
+                Held = Trigger.Pressed(Now, Combat::PlanTrigger(Combat::TriggerMode::Automatic,
+                    8., Precision.Preferred, true));
+                Bursts += Held;
+            }
+            Safe &= !Held || (Visible && Aligned && Move.Strafe == 0. && std::abs(Velocity) < 111.);
+        }
+        Check(Safe && Bursts >= 8 && MovingFrames > 20 && DirectionChanges >= 2 && DirectionChanges <= 4,
+            "sustained precision engagement repositions, settles and fires without oscillation or blind bursts");
+    }
 
     if (!Failures)
         std::puts("Player bot combat tests passed.");

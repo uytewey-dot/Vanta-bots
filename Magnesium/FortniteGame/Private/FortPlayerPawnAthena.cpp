@@ -12,6 +12,7 @@
 #include "../../Erbium/Public/GUI.h"
 #include "../../Erbium/Public/PlayerLoadout.h"
 #include "../../Erbium/Support/Public/FaultGuard.h"
+#include "../../Erbium/Support/Public/PlayerBotMapIconRegistry.h"
 
 #include <array>
 
@@ -174,12 +175,19 @@ namespace
         TWeakObjectPtr<UObject> Component;
         TWeakObjectPtr<UObject> Texture;
         TWeakObjectPtr<UObject> PreferredCharacterDefinition;
+        TWeakObjectPtr<UObject> PreviousPawnBrushResource;
+        TWeakObjectPtr<UObject> AppliedPawnBrushResource;
+        bool bCapturedPawnBrushResource = false;
         bool bPreferredTextureApplied = false;
         bool bTemporaryFallbackApplied = false;
     };
 
     std::array<FPendingPlayerMapIcon, MaxPendingPlayerMapIcons> GPendingPlayerMapIcons{};
     std::array<FAppliedPlayerMapIcon, MaxPendingPlayerMapIcons> GAppliedPlayerMapIcons{};
+    PlayerBotMapIconRegistry<TWeakObjectPtr<AFortPlayerControllerAthena>,
+        TWeakObjectPtr<AFortPlayerPawnAthena>> GSuppressedBotMapIcons;
+    FAppliedPlayerMapIcon* FindAppliedPlayerMapIcon(AFortPlayerPawnAthena* Pawn, bool bAddIfMissing);
+    bool GWarnedBotMapIconSuppression = false;
     size_t GPendingPlayerMapIconCursor = 0;
     size_t GPendingPlayerMapIconRetryCursor = 0;
     size_t GAppliedPlayerMapIconCursor = 0;
@@ -554,7 +562,19 @@ namespace
             return;
         }
 
+        auto AppliedState = FindAppliedPlayerMapIcon(Pawn, true);
+        if (AppliedState && !AppliedState->bCapturedPawnBrushResource)
+        {
+            UObject* PreviousResource = nullptr;
+            memcpy(&PreviousResource, ResourceAddress, sizeof(PreviousResource));
+            if (PreviousResource && !IsLiveHealthStateObject(PreviousResource))
+                return;
+            AppliedState->PreviousPawnBrushResource = TWeakObjectPtr<UObject>(PreviousResource);
+            AppliedState->bCapturedPawnBrushResource = true;
+        }
         memcpy(ResourceAddress, &IconTexture, sizeof(IconTexture));
+        if (AppliedState)
+            AppliedState->AppliedPawnBrushResource = TWeakObjectPtr<UObject>(IconTexture);
     }
 
     constexpr size_t PlayerMapIconParameterBufferSize = 0x1000;
@@ -916,6 +936,7 @@ namespace
 
         GPendingPlayerMapIcons = {};
         GAppliedPlayerMapIcons = {};
+        GSuppressedBotMapIcons.Reset();
         GPendingPlayerMapIconCursor = 0;
         GPendingPlayerMapIconRetryCursor = 0;
         GAppliedPlayerMapIconCursor = 0;
@@ -948,6 +969,118 @@ namespace
         return Entry;
     }
 
+    bool ShouldSuppressBotMapIcon(AFortPlayerControllerAthena* Controller,
+        AFortPlayerPawnAthena* Pawn)
+    {
+        if (!IsLiveHealthStateObject(Pawn))
+            return false;
+        // Prefer the current owner over a possibly stale cosmetic callback. A
+        // human taking possession of a former bot pawn keeps normal map behavior.
+        if (Pawn->HasController() && IsLiveHealthStateObject(Pawn->Controller))
+        {
+            Controller = Pawn->Controller->Cast<AFortPlayerControllerAthena>();
+            if (!Controller)
+                return false;
+        }
+        if (!IsLiveHealthStateObject(Controller))
+            Controller = nullptr;
+        if (GSuppressedBotMapIcons.Contains(Controller, Pawn))
+            return true;
+        if (!Controller || !AFortPlayerControllerAthena::IsCheatSpawnedBotController(Controller))
+            return false;
+        // The older controller registry uses raw addresses. Require current bot
+        // state as well, so an address reused for a human cannot inherit a marker
+        // override. Early spawn callbacks use the generation-checked registry.
+        auto PlayerState = Controller->HasPlayerState() &&
+            IsLiveHealthStateObject(Controller->PlayerState)
+            ? Controller->PlayerState->Cast<AFortPlayerStateAthena>() : nullptr;
+        return PlayerState && PlayerState->HasbIsABot() && PlayerState->bIsABot;
+    }
+
+    bool HideConfiguredPlayerMapIcon(UObject* Component, UFunction* Function,
+        const char* ParameterName)
+    {
+        if (!IsLiveHealthStateObject(Component) || !IsLiveHealthStateObject(Function) ||
+            !Function->GetProperty(ParameterName, 0x20000))
+            return false;
+        const auto Parameters = Function->GetParamsNamed();
+        if (Parameters.Size == 0 || Parameters.Size > 16)
+            return false;
+        unsigned Inputs = 0;
+        for (const auto& Field : Parameters.NameOffsetMap)
+        {
+            if (!(Field.PropertyFlags & 0x80))
+                continue;
+            if (Field.Name != ParameterName || (Field.PropertyFlags & (0x100 | 0x400)) ||
+                Field.ElementSize != sizeof(bool) || Field.Offset >= Parameters.Size)
+                return false;
+            ++Inputs;
+        }
+        if (Inputs != 1)
+            return false;
+        // False is zero for both native bools and bitfield representations.
+        alignas(16) uint8 Buffer[16]{};
+        Component->ProcessEvent(Function, Buffer);
+        return true;
+    }
+
+    void SuppressConfiguredBotMapIcon(AFortPlayerPawnAthena* Pawn)
+    {
+        for (auto& Pending : GPendingPlayerMapIcons)
+            if (Pending.Pawn.Get() == Pawn)
+                Pending = {};
+        auto Applied = FindAppliedPlayerMapIcon(Pawn, false);
+        if (!Applied)
+            return;
+
+        // Only touch the component previously configured by Vanta. Do not scan
+        // native NPCs, AI debug services, teammates, pings or reveal mechanics.
+        auto Component = Applied->Component.Get();
+        bool bHidden = !IsLiveHealthStateObject(Component);
+        if (!bHidden)
+        {
+            const auto& Functions = GetPlayerMapIconFunctions(Component);
+            const bool bGenericHidden = HideConfiguredPlayerMapIcon(Component,
+                Functions.SetVisible, "bVisible");
+            const bool bMapHidden = HideConfiguredPlayerMapIcon(Component,
+                Functions.SetVisibleOnMap, "bVisibleOnMap");
+            const bool bMiniMapHidden = HideConfiguredPlayerMapIcon(Component,
+                Functions.SetVisibleOnMiniMap, "bVisibleOnMiniMap");
+            bHidden = bGenericHidden || (bMapHidden && bMiniMapHidden);
+            if (bHidden && IsLiveHealthStateObject(Functions.RepNotify) &&
+                Functions.RepNotify->GetPropertiesSize() == 0)
+                Component->ProcessEvent(Functions.RepNotify, nullptr);
+        }
+
+        if (Applied->bCapturedPawnBrushResource)
+        {
+            FPlayerMapIconPawnBrushLayout Layout{};
+            if (ResolvePlayerMapIconPawnBrushLayout(Pawn, Layout))
+            {
+                auto ResourceAddress = reinterpret_cast<uint8_t*>(Pawn) +
+                    Layout.BrushOffset + Layout.ResourceOffset;
+                UObject* CurrentResource = nullptr;
+                memcpy(&CurrentResource, ResourceAddress, sizeof(CurrentResource));
+                // Preserve changes made by native game code after our override.
+                if (CurrentResource == Applied->AppliedPawnBrushResource.Get() &&
+                    IsWritableObjectMemory(ResourceAddress, sizeof(CurrentResource)))
+                {
+                    auto PreviousResource = Applied->PreviousPawnBrushResource.Get();
+                    memcpy(ResourceAddress, &PreviousResource, sizeof(PreviousResource));
+                }
+            }
+        }
+        Pawn->ForceNetUpdate();
+        if (bHidden)
+            *Applied = {};
+        else if (!GWarnedBotMapIconSuppression)
+        {
+            GWarnedBotMapIconSuppression = true;
+            SDK::DbgLog("[PlayerMapIcons] bot icon visibility API is unavailable; "
+                "further icon creation is blocked on FN %.2f\n", VersionInfo.FortniteVersion);
+        }
+    }
+
     void QueuePendingPlayerMapIcon(AFortPlayerControllerAthena* Controller,
         AFortPlayerPawnAthena* Pawn, const UObject* PreferredCharacterDefinition,
         ULONGLONG RetryAfterMs)
@@ -957,7 +1090,7 @@ namespace
 
         auto World = UWorld::GetWorld();
         ResetPendingPlayerMapIconsForWorld(World);
-        if (!World)
+        if (!World || ShouldSuppressBotMapIcon(Controller, Pawn))
             return;
 
         const ULONGLONG Now = GetTickCount64();
@@ -1003,7 +1136,22 @@ namespace
     {
         auto World = UWorld::GetWorld();
         ResetPendingPlayerMapIconsForWorld(World);
-        if (!World || !FConfiguration::bPlayerMapIcons.load(std::memory_order_acquire) ||
+        if (!World)
+            return;
+        const ULONGLONG Now = GetTickCount64();
+        if (Now < GNextPendingPlayerMapIconTickAt)
+            return;
+        GNextPendingPlayerMapIconTickAt = Now + 100ULL;
+
+        // Cleanup also runs with map icons / bot AI disabled and after a version
+        // selection change. Those preferences must never resurrect bot markers.
+        for (auto& Applied : GAppliedPlayerMapIcons)
+        {
+            auto Pawn = Applied.Pawn.Get();
+            if (ShouldSuppressBotMapIcon(nullptr, Pawn))
+                SuppressConfiguredBotMapIcon(Pawn);
+        }
+        if (!FConfiguration::bPlayerMapIcons.load(std::memory_order_acquire) ||
             GPlayerMapIconSetupDisabled)
         {
             GPendingPlayerMapIcons = {};
@@ -1011,11 +1159,6 @@ namespace
             GPendingPlayerMapIconRetryCursor = 0;
             return;
         }
-
-        const ULONGLONG Now = GetTickCount64();
-        if (Now < GNextPendingPlayerMapIconTickAt)
-            return;
-        GNextPendingPlayerMapIconTickAt = Now + 100ULL;
 
         constexpr int MaximumRetriesPerTick = 2;
         int Retried = 0;
@@ -1055,6 +1198,14 @@ namespace
         if (!IsLiveHealthStateObject(Pawn))
             return false;
         ResetPendingPlayerMapIconsForWorld(UWorld::GetWorld());
+        if (ShouldSuppressBotMapIcon(Controller, Pawn))
+        {
+            SuppressConfiguredBotMapIcon(Pawn);
+            return true;
+        }
+        if (!FConfiguration::bPlayerMapIcons.load(std::memory_order_acquire) ||
+            GPlayerMapIconSetupDisabled)
+            return false;
 
         if (IsLiveHealthStateObject(PreferredCharacterDefinition))
         {
@@ -2931,15 +3082,33 @@ namespace
     }
 }
 
+void AFortPlayerPawnAthena::SuppressBotMapIcon(AFortPlayerControllerAthena* Controller,
+    AFortPlayerPawnAthena* Pawn)
+{
+    __try
+    {
+        auto World = UWorld::GetWorld();
+        ResetPendingPlayerMapIconsForWorld(World);
+        if (!World || !IsLiveHealthStateObject(Controller) || !IsLiveHealthStateObject(Pawn))
+            return;
+        // Record before Possess(), bIsABot, or the AI runtime can run callbacks.
+        GSuppressedBotMapIcons.Remember(Controller, Pawn);
+        SuppressConfiguredBotMapIcon(Pawn);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        if (!GWarnedBotMapIconSuppression)
+        {
+            GWarnedBotMapIconSuppression = true;
+            SDK::DbgLog("[PlayerMapIcons] bot marker cleanup faulted on FN %.2f; "
+                "recorded bot identity remains suppressed\n", VersionInfo.FortniteVersion);
+        }
+    }
+}
+
 bool AFortPlayerPawnAthena::EnsurePlayerMapIcon(AFortPlayerControllerAthena* Controller,
     AFortPlayerPawnAthena* Pawn, const UObject* PreferredCharacterDefinition)
 {
-    if (!FConfiguration::bPlayerMapIcons.load(std::memory_order_acquire) ||
-        GPlayerMapIconSetupDisabled)
-    {
-        return false;
-    }
-
     bool bConfigured = false;
     __try
     {

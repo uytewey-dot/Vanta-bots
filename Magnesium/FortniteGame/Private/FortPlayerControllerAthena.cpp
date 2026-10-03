@@ -1566,9 +1566,6 @@ static bool UsesTrackedLegacySpawnedBotLifecycle()
     return VersionInfo.FortniteVersion == 1.72 || VersionInfo.FortniteVersion == 2.50;
 }
 static std::unordered_set<AFortPlayerControllerAthena*> GSpawnedBotControllers;
-static bool GPlayerMapIconsWereEnabled = false;
-static bool GSpawnedBotMapIconBackfillActive = false;
-static size_t GSpawnedBotMapIconBackfillCursor = 0;
 static std::unordered_set<AFortPlayerControllerAthena*>
     GSpawnedBotStormSuppressionLoggedControllers;
 static float GSpawnedBotStormSuppressionRemainingSeconds = 0.f;
@@ -11565,9 +11562,6 @@ static void RefreshSpawnedBotTrackingWorld()
     GPendingSpawnedBotEquipment.clear();
     G172SpawnedBotRemovalAttempts.clear();
     GSpawnedBotControllers.clear();
-    GPlayerMapIconsWereEnabled = false;
-    GSpawnedBotMapIconBackfillActive = false;
-    GSpawnedBotMapIconBackfillCursor = 0;
     GSpawnedBotStormSuppressionLoggedControllers.clear();
     GSpawnedBotStormSuppressionRemainingSeconds = 0.f;
     GPendingRespawnCameraHandoffs.erase(std::remove_if(GPendingRespawnCameraHandoffs.begin(),
@@ -11585,63 +11579,6 @@ static void RefreshSpawnedBotTrackingWorld()
         SDK::DbgLog(
             "[Elimination] reset spawnbot tracking for world transition old=%p new=%p bots=%d pending=%d\n",
             (void*)PreviousWorld, (void*)CurrentWorld, PreviousBotCount, PreviousCleanupCount);
-    }
-}
-
-static void TickSpawnedBotMapIconBackfill()
-{
-    const bool bEnabled = FConfiguration::bPlayerMapIcons.load(std::memory_order_acquire);
-    if (!bEnabled)
-    {
-        GPlayerMapIconsWereEnabled = false;
-        GSpawnedBotMapIconBackfillActive = false;
-        GSpawnedBotMapIconBackfillCursor = 0;
-        return;
-    }
-
-    if (!GPlayerMapIconsWereEnabled)
-    {
-        GPlayerMapIconsWereEnabled = true;
-        GSpawnedBotMapIconBackfillActive = true;
-        GSpawnedBotMapIconBackfillCursor = 0;
-    }
-    if (!GSpawnedBotMapIconBackfillActive)
-        return;
-
-    constexpr size_t MaximumBotsPerTick = 2;
-    size_t Examined = 0;
-    size_t Configured = 0;
-    for (auto PlayerController : GSpawnedBotControllers)
-    {
-        if (Examined++ < GSpawnedBotMapIconBackfillCursor)
-            continue;
-
-        ++GSpawnedBotMapIconBackfillCursor;
-        if (!IsUsableDeathObject(PlayerController) || !IsUsableDeathObject(PlayerController->Pawn))
-        {
-            continue;
-        }
-
-        auto Pawn = PlayerController->Pawn->Cast<AFortPlayerPawnAthena>();
-        if (!Pawn)
-            continue;
-
-        UAthenaCharacterItemDefinition* Character = nullptr;
-        if (PlayerController->HasCosmeticLoadoutPC())
-            Character = PlayerController->CosmeticLoadoutPC.Character;
-        if (!Character && PlayerController->HasCustomizationLoadout())
-        {
-            Character = PlayerController->CustomizationLoadout.Character;
-        }
-
-        AFortPlayerPawnAthena::EnsurePlayerMapIcon(PlayerController, Pawn, Character);
-        if (++Configured >= MaximumBotsPerTick)
-            break;
-    }
-
-    if (GSpawnedBotMapIconBackfillCursor >= GSpawnedBotControllers.size())
-    {
-        GSpawnedBotMapIconBackfillActive = false;
     }
 }
 
@@ -18526,7 +18463,6 @@ void AFortPlayerControllerAthena::TickNukeRockets(float DeltaSeconds)
 {
     RefreshSpawnedBotTrackingWorld();
     TickPendingAircraftWarmupShieldResets(DeltaSeconds);
-    TickSpawnedBotMapIconBackfill();
     TickTrackedSpawnedBotStormSuppression(DeltaSeconds);
     TickSpawnedBotEquipmentAfterCosmetics();
     TickPendingTacticalSprintSpecGrants();
@@ -21106,6 +21042,9 @@ cheat shortcmds <items/objects> - Lists all short names for cheat give/spawn
                         PC->OnRep_PlayerState();
                     }
 
+                    // Possession can trigger cosmetic callbacks before the bot
+                    // enters the match roster. Suppress forced map icons first.
+                    AFortPlayerPawnAthena::SuppressBotMapIcon(PC, Pawn);
                     PC->Possess(Pawn);
                     PC->MyFortPawn = Pawn; // dont't ask, crashes on 27+
 
@@ -21249,6 +21188,7 @@ cheat shortcmds <items/objects> - Lists all short names for cheat give/spawn
 
                     GameMode->AlivePlayers.Add(PC);
                     RegisterTrackedSpawnedBotController(PC);
+                    AFortPlayerPawnAthena::SuppressBotMapIcon(PC, Pawn);
 
                     Pawn->FlushNetDormancy();
                     Pawn->ForceNetUpdate();
@@ -21256,7 +21196,7 @@ cheat shortcmds <items/objects> - Lists all short names for cheat give/spawn
 
                     ApplyLegacySpawnedBotDefaultAppearance(PC, PlayerState, Pawn);
                     SetActorScaleForCommand(Pawn, BotScale);
-                    AFortPlayerPawnAthena::EnsurePlayerMapIcon(PC, Pawn);
+                    AFortPlayerPawnAthena::SuppressBotMapIcon(PC, Pawn);
 
                     PlayerBotID++;
 

@@ -23,6 +23,7 @@ static_assert(Selection::Fortnite1241 == 11);
 static_assert(Selection::Fortnite1261 == 12);
 static_assert(Selection::Fortnite1550 == 13);
 static_assert(Selection::Fortnite1730 == 14);
+static_assert(Selection::Fortnite1901 == 15);
 static_assert(Selection::ParsePreference("auto") == Selection::Automatic);
 static_assert(Selection::ParsePreference("28.30") == Selection::Fortnite2830);
 static_assert(Selection::ParsePreference("31.41") == Selection::Fortnite3141);
@@ -38,6 +39,7 @@ static_assert(Selection::ParsePreference("12.41") == Selection::Fortnite1241);
 static_assert(Selection::ParsePreference("12.61") == Selection::Fortnite1261);
 static_assert(Selection::ParsePreference("15.50") == Selection::Fortnite1550);
 static_assert(Selection::ParsePreference("17.30") == Selection::Fortnite1730);
+static_assert(Selection::ParsePreference("19.01") == Selection::Fortnite1901);
 static_assert(Selection::Normalize(-1) == Selection::Automatic);
 
 int main()
@@ -54,16 +56,16 @@ int main()
 
     const double Infinity = std::numeric_limits<double>::infinity();
     const double NaN = std::numeric_limits<double>::quiet_NaN();
-    const std::array<double, 29> Releases{0.0, 1.72, 10.30, 10.40, 11.30, 11.31,
+    const std::array<double, 31> Releases{0.0, 1.72, 10.30, 10.40, 11.30, 11.31,
         11.50, 12.00, 12.10, 12.40, 12.41, 12.60, 12.61, 13.00, 14.00, 14.20,
-        14.40, 14.60, 15.00, 15.50, 17.20, 17.30, 19.10, 24.20, 26.30,
+        14.40, 14.60, 15.00, 15.50, 17.20, 17.30, 19.00, 19.01, 19.10, 24.20, 26.30,
         28.30, 31.41, 32.11, 33.0};
     const std::array<const char*, Selection::Count> Tokens{
         "auto", "28.30", "31.41", "32.11", "19.10", "24.20", "26.30", "12.xx", "14.xx",
-        "10.40", "11.31", "12.41", "12.61", "15.50", "17.30"};
+        "10.40", "11.31", "12.41", "12.61", "15.50", "17.30", "19.01"};
     const std::array<double, Selection::Count> Targets{
         0.0, 28.30, 31.41, 32.11, 19.10, 24.20, 26.30, 12.0, 14.0,
-        10.40, 11.31, 12.41, 12.61, 15.50, 17.30};
+        10.40, 11.31, 12.41, 12.61, 15.50, 17.30, 19.01};
 
     Check(std::string_view(Selection::Options[Selection::Automatic].Label) ==
         "Automatic (current game)", "automatic label describes the actual loaded game");
@@ -126,15 +128,18 @@ int main()
     Check(!Selection::Allows(Selection::Fortnite1241, 12.61) &&
         !Selection::Allows(Selection::Fortnite1261, 12.41),
         "an exact Chapter 2 choice cannot accept the other release from the same season");
+    Check(!Selection::Allows(Selection::Fortnite1901, 19.10) &&
+        !Selection::Allows(Selection::Fortnite1910, 19.01),
+        "19.01 and the existing 19.10 selection remain distinct exact releases");
     for (double Release : Releases)
         Check(Selection::HasLegacyReference(Release) ==
             (Release == 10.40 || Release == 11.31 || Release == 12.41 ||
-             Release == 12.61 || Release == 15.50 || Release == 17.30),
-            "SDK reference validation applies to the six audited releases only");
+             Release == 12.61 || Release == 15.50 || Release == 17.30 || Release == 19.01),
+            "SDK reference validation applies to the seven audited releases only");
     for (double Invalid : {-1.0, NaN, Infinity, -Infinity})
         Check(!Selection::HasLegacyReference(Invalid),
             "malformed versions cannot qualify for a supplied SDK reference");
-    for (double Release : {10.40, 11.31, 12.41, 12.61, 15.50, 17.30})
+    for (double Release : {10.40, 11.31, 12.41, 12.61, 15.50, 17.30, 19.01})
     {
         Check(!Selection::HasLegacyReference(std::nextafter(Release, Infinity)) &&
             !Selection::HasLegacyReference(std::nextafter(Release, -Infinity)),
@@ -157,7 +162,7 @@ int main()
 
     for (std::string_view Unknown : {"", "automatic", "current", "legacy", "30.20",
             "10.4", "11.310", "12.410", "12.61suffix", "14.60", "15.5", "17.3",
-            "12.XX", "14.xx suffix", "19.1", "24.2", "26.3",
+            "12.XX", "14.xx suffix", "19.0", "19.010", "19.01suffix", "19.1", "24.2", "26.3",
             "28.3", "28.30suffix", "31.4", "32.110", "1", "AUTO", " auto", "auto "})
         Check(Selection::ParsePreference(Unknown) == Selection::Automatic,
             "old or unknown preference strings migrate to automatic");

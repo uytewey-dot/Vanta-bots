@@ -206,6 +206,7 @@
     <ClInclude Include="Erbium\Support\Public\PlayerBotRuntime.h" />
     <ClInclude Include="Erbium\Support\Public\PlayerBotVersionSelection.h" />
     <ClInclude Include="Erbium\Support\Public\PlayerBotCombat.h" />
+    <ClInclude Include="Erbium\Support\Public\PlayerBotMapIconRegistry.h" />
     <ClInclude Include="FortniteGame\Public\BattleRoyaleGamePhaseLogic.h" />
     <ClInclude Include="FortniteGame\Public\CustomSafeZoneRuntime.h" />
     <ClInclude Include="FortniteGame\Public\BuildingContainer.h" />
@@ -322,6 +323,7 @@
     <None Include="Tests\FortniteShippingProfileTests.cpp" />
     <None Include="Tests\PlayerBotVersionSelectionTests.cpp" />
     <None Include="Tests\PlayerBotCombatTests.cpp" />
+    <None Include="Tests\PlayerBotMapIconTests.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

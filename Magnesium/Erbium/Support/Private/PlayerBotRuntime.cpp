@@ -16,7 +16,7 @@ namespace
     constexpr uint64 ParameterFlag = 0x80;
     constexpr uint64 ReturnFlag = 0x400;
     constexpr float PerceptionInterval = 0.25f;
-    constexpr float ActionInterval = 0.05f;
+    constexpr float ActionInterval = 1.f / 30.f;
     constexpr int ParticipantScanLimit = 512;
 
     bool IsAIEnabledForCurrentGame() noexcept
@@ -40,8 +40,18 @@ namespace
         float NextAction = 0.f;
         float NextReload = 0.f;
         float LastTick = 0.f;
+        float NextWeaponSample = 0.f;
+        float WeaponRange = 0.f;
+        float FiringRate = 0.f;
+        double ProjectileVelocity = 0.;
+        bool Scoped = false;
+        PlayerBotCombat::TriggerMode TriggerMode = PlayerBotCombat::TriggerMode::Unknown;
         PlayerBotCombat::MotionTracker Motion;
+        PlayerBotCombat::MotionTracker OwnMotion;
+        PlayerBotCombat::AimFollower AimFollower;
         PlayerBotCombat::AimWindow AimWindow;
+        PlayerBotCombat::ShotStability Stability;
+        PlayerBotCombat::Maneuver Maneuver;
         PlayerBotCombat::TriggerCadence Trigger;
     };
 
@@ -397,7 +407,10 @@ namespace
     void ResetAim(FBot& Bot)
     {
         Bot.Motion.Reset();
+        Bot.OwnMotion.Reset();
+        Bot.AimFollower.Reset();
         Bot.AimWindow.Reset();
+        Bot.Stability.Reset();
         Bot.Chase = false;
         Bot.NextAction = 0.f;
     }
@@ -406,6 +419,7 @@ namespace
     {
         Stop(Bot);
         ResetAim(Bot);
+        Bot.Maneuver.Reset();
         Bot.Target = TWeakObjectPtr<AFortPlayerPawnAthena>();
     }
 
@@ -418,6 +432,25 @@ namespace
             return false;
         const FVector Direction(X / Length, Y / Length, 0.);
         const float Scale = 1.f;
+        const uint8 Force = 1;
+        FNativeCall Call(Pawn, "AddMovementInput", { "WorldDirection", "ScaleValue", "bForce" });
+        return Call.Field("WorldDirection", &Direction, FVector::Size()) &&
+            Call.Field("ScaleValue", &Scale, sizeof(Scale)) &&
+            Call.Field("bForce", &Force, sizeof(Force)) && Call.Invoke();
+    }
+
+    bool Maneuver(AFortPlayerPawnAthena* Pawn, const FVector& From, const FVector& To,
+        const PlayerBotCombat::ManeuverPlan& Plan)
+    {
+        const double X = To.X - From.X;
+        const double Y = To.Y - From.Y;
+        const double Distance = std::hypot(X, Y);
+        const double ScaleValue = std::hypot(Plan.Forward, Plan.Strafe);
+        if (!std::isfinite(Distance) || Distance < 1. || !std::isfinite(ScaleValue) || ScaleValue < 0.01)
+            return false;
+        const FVector Direction((X * Plan.Forward - Y * Plan.Strafe) / (Distance * ScaleValue),
+            (Y * Plan.Forward + X * Plan.Strafe) / (Distance * ScaleValue), 0.);
+        const float Scale = float((std::min)(ScaleValue, 1.));
         const uint8 Force = 1;
         FNativeCall Call(Pawn, "AddMovementInput", { "WorldDirection", "ScaleValue", "bForce" });
         return Call.Field("WorldDirection", &Direction, FVector::Size()) &&
@@ -472,13 +505,13 @@ namespace
         return true;
     }
 
-    bool Aim(AFortPlayerControllerAthena* Controller, const FVector& From,
+    bool Aim(FBot& Bot, AFortPlayerControllerAthena* Controller, const FVector& From,
         const PlayerBotCombat::Vector& To, double DeltaSeconds)
     {
         PlayerBotCombat::Rotation Current, Desired, Smoothed;
         if (!ControlRotation(Controller, Current) ||
             !PlayerBotCombat::LookAt(CombatVector(From), To, Desired) ||
-            !PlayerBotCombat::SmoothAim(Current, Desired, DeltaSeconds, Smoothed))
+            !Bot.AimFollower.Update(Current, Desired, DeltaSeconds, Smoothed))
             return false;
         const FRotator Rotation(Smoothed.Pitch, Smoothed.Yaw, 0.);
         FNativeCall Call(Controller, "SetControlRotation", { "NewRotation" });
@@ -489,21 +522,30 @@ namespace
                 PlayerBotCombat::Length(PlayerBotCombat::Difference(To, CombatVector(From))));
     }
 
-    PlayerBotCombat::TriggerPlan WeaponTrigger(AFortWeapon* Weapon, double Distance)
+    double ProjectileSpeed(AFortWeapon* Weapon);
+
+    void SampleWeapon(FBot& Bot, AFortWeapon* Weapon, float Now)
     {
+        if (Now < Bot.NextWeaponSample)
+            return;
+        Bot.NextWeaponSample = Now + 0.5f;
         uint8 RawType = 255;
-        auto Mode = PlayerBotCombat::TriggerMode::Unknown;
+        Bot.TriggerMode = PlayerBotCombat::TriggerMode::Unknown;
         if (OptionalValue(Weapon, "GetWeaponDataTriggerType", RawType))
         {
-            // EFortWeaponTriggerType is uint8 in all six audited legacy SDKs.
+            // EFortWeaponTriggerType is uint8 in the audited legacy SDKs.
             // Charge/release weapons need their own cancellation/charge lifecycle.
-            Mode = RawType == 0 ? PlayerBotCombat::TriggerMode::OnPress :
+            Bot.TriggerMode = RawType == 0 ? PlayerBotCombat::TriggerMode::OnPress :
                 RawType == 1 ? PlayerBotCombat::TriggerMode::Automatic :
                 PlayerBotCombat::TriggerMode::Unsupported;
         }
-        float Rate = 0.f;
-        OptionalValue(Weapon, "GetFiringRate", Rate);
-        return PlayerBotCombat::PlanTrigger(Mode, Rate, Distance);
+        Bot.FiringRate = Bot.WeaponRange = 0.f;
+        OptionalValue(Weapon, "GetFiringRate", Bot.FiringRate);
+        OptionalValue(Weapon, "GetRange", Bot.WeaponRange);
+        uint8 Scoped = 0;
+        Bot.Scoped = OptionalValue(Weapon, "UseScopeTargeting", Scoped) && Scoped != 0;
+        Bot.ProjectileVelocity = Bot.TriggerMode == PlayerBotCombat::TriggerMode::Unsupported
+            ? 0. : ProjectileSpeed(Weapon);
     }
 
     double ProjectileSpeed(AFortWeapon* Weapon)
@@ -805,6 +847,7 @@ namespace
             {
                 Stop(Bot);
                 ResetAim(Bot);
+                Bot.Maneuver.Reset();
                 Target = Candidate;
                 Bot.Target = TWeakObjectPtr<AFortPlayerPawnAthena>(Target);
             }
@@ -819,7 +862,7 @@ namespace
             return;
         }
         const double DistanceSquared = (TargetPosition - Position).SizeSquared();
-        if (!CanSee || DistanceSquared > double(Engage) * Engage)
+        if (!CanSee)
         {
             Stop(Bot);
             ResetAim(Bot); // No velocity or reaction-time carryover through cover.
@@ -836,22 +879,40 @@ namespace
         {
             Stop(Bot);
             ResetAim(Bot);
+            Bot.Maneuver.Reset();
             Bot.CombatWeapon = TWeakObjectPtr<AFortWeapon>(Weapon);
             Bot.NextReload = 0.f;
+            Bot.NextWeaponSample = 0.f;
         }
         if (!Weapon || Bot.StopRequested)
         {
             Stop(Bot);
             return;
         }
+        SampleWeapon(Bot, Weapon, Now);
+        const auto Profile = PlayerBotCombat::Profile(Engage, Bot.WeaponRange, Bot.Scoped, Bot.FiringRate);
+        const double Distance = std::sqrt(DistanceSquared);
+        if (Distance > Profile.Range)
+        {
+            Stop(Bot);
+            ResetAim(Bot);
+            Bot.Chase = true;
+            Move(Pawn, Position, TargetPosition);
+            return;
+        }
         uint8 IsReloading = 0;
-        if (OptionalValue(Weapon, "IsReloading", IsReloading) && IsReloading)
+        OptionalValue(Weapon, "IsReloading", IsReloading);
+        const bool Empty = !Weapon->HasAmmoCount() || Weapon->AmmoCount <= 0;
+        const auto Movement = Bot.Maneuver.Update(Now, Distance, Profile, IsReloading || Empty,
+            unsigned(reinterpret_cast<uintptr_t>(Controller) >> 4));
+        Maneuver(Pawn, Position, TargetPosition, Movement);
+        if (IsReloading)
         {
             Stop(Bot);
             ResetAim(Bot);
             return;
         }
-        if (!Weapon->HasAmmoCount() || Weapon->AmmoCount <= 0)
+        if (Empty)
         {
             Stop(Bot);
             ResetAim(Bot);
@@ -859,21 +920,46 @@ namespace
                 Reload(Bot, Pawn, Now);
             return;
         }
-        if (Now < Bot.NextAction)
-            return; // LOS, ownership, ammo and reload state were checked this tick.
-        Bot.NextAction = Now + ActionInterval;
         const float RawHeight = Target->HasBaseEyeHeight() ? Target->BaseEyeHeight : 64.f;
         const double BodyHeight = std::isfinite(RawHeight)
             ? (std::clamp)(double(RawHeight) * 0.55, 20., 65.) : 35.;
         const PlayerBotCombat::Vector Body{ TargetPosition.X, TargetPosition.Y,
             TargetPosition.Z + BodyHeight };
+        if (Now < Bot.NextAction)
+        {
+            // Native automatic fire continues between decision frames. Close its
+            // gate immediately if a moving target/recoil is no longer aligned,
+            // or if a long-range maneuver resumes before the next aim update.
+            if (Bot.Firing)
+            {
+                auto CurrentTrack = Bot.Motion;
+                CurrentTrack.Position = Body;
+                const auto Point = CurrentTrack.AimPoint(CombatVector(ViewPoint), Bot.ProjectileVelocity);
+                PlayerBotCombat::Rotation Current, Desired;
+                if ((Movement.NeedsPlant && (Movement.Forward != 0. || Movement.Strafe != 0.)) ||
+                    !ControlRotation(Controller, Current) ||
+                    !PlayerBotCombat::LookAt(CombatVector(ViewPoint), Point, Desired) ||
+                    !PlayerBotCombat::Aligned(Current, Desired,
+                        PlayerBotCombat::Length(PlayerBotCombat::Difference(Point, CombatVector(ViewPoint)))))
+                {
+                    Stop(Bot);
+                    Bot.Stability.Reset();
+                }
+            }
+            return;
+        }
+        Bot.NextAction = Now + ActionInterval;
         Bot.Motion.Sample(Body, Now);
+        Bot.OwnMotion.Sample(CombatVector(Position), Now);
         const double Delta = Bot.AimWindow.Observe(true, Now);
-        const auto Plan = WeaponTrigger(Weapon, std::sqrt(DistanceSquared));
+        const auto Plan = PlayerBotCombat::PlanTrigger(Bot.TriggerMode, Bot.FiringRate, Distance, Profile.Precision);
         const auto AimPoint = Bot.Motion.AimPoint(CombatVector(ViewPoint),
-            Plan.Supported ? ProjectileSpeed(Weapon) : 0.);
-        const bool OnTarget = Aim(Controller, ViewPoint, AimPoint, Delta);
-        if (!Plan.Supported || !OnTarget || !Bot.AimWindow.Ready(Now))
+            Plan.Supported ? Bot.ProjectileVelocity : 0.);
+        const bool OnTarget = Aim(Bot, Controller, ViewPoint, AimPoint, Delta);
+        const bool Planted = !Movement.NeedsPlant || (Movement.Forward == 0. && Movement.Strafe == 0. &&
+            Bot.OwnMotion.HasVelocity && std::hypot(Bot.OwnMotion.Velocity.X, Bot.OwnMotion.Velocity.Y) <= 110.);
+        const bool Stable = Bot.Stability.Observe(OnTarget && Planted, Now, Profile.Precision ? 0.09 : 0.035);
+        if (!Plan.Supported || !Stable || !Bot.AimWindow.Ready(Now, Profile.Reaction))
         {
             Stop(Bot);
             return;
@@ -977,6 +1063,7 @@ namespace
                 Iterator->Trigger = {};
                 Iterator->NextPerception = 0.f;
                 Iterator->NextReload = 0.f;
+                Iterator->NextWeaponSample = 0.f;
             }
             if (!Enabled)
             {

@@ -30,8 +30,9 @@ Vanta Bots builds on Magnesium, a fork of [Erbium](https://github.com/plooshi/Er
 
 | Feature | What it does |
 | --- | --- |
-| **Bot AI** | Spawn opponents with smooth aiming, line-of-sight and alignment checks, weapon-aware firing, and ability-based reloads. |
-| **Version selection** | Choose one of fourteen targets or **Automatic**, with your selection saved across sessions. |
+| **Bot AI** | Track moving targets, lead fast projectiles, control firing bursts, and reposition for the equipped weapon. |
+| **Map icons** | Spawn bots without Vanta's forced map and minimap portraits, including stationary practice bots. |
+| **Version selection** | Choose one of fifteen targets or **Automatic**, with your selection saved across sessions. |
 | **Bot settings** | Configure names, health, shields, detection range, and engagement distance. |
 | **Interface** | Use version cards, smooth transitions, and animated toggles. Turn motion off with **Animations**. |
 | **Match controls** | Choose a playlist, configure the server, and start match preparation with **Start Match**. |
@@ -40,7 +41,7 @@ Vanta Bots builds on Magnesium, a fork of [Erbium](https://github.com/plooshi/Er
 <p align="center">
   <img src="docs/assets/player-bots.png" alt="Vanta Bots Player Bot panel with legacy and current version cards" width="960">
   <br>
-  <sub>Interface preview using sample Fortnite 12.41 data. This is not a running game session.</sub>
+  <sub>Interface preview using sample Fortnite 19.01 data. This is not a running game session.</sub>
 </p>
 
 <a id="quick-start"></a>
@@ -77,6 +78,7 @@ Bots act during an active match. Ranged weapons from their starting loadout or s
 | **14.xx** | Chapter 2 · Season 4 | Releases from 14.00 up to, but excluding, 15.00 |
 | **15.50** | Chapter 2 · Season 5 | Exact release; supplied SDK actions audited |
 | **17.30** | Chapter 2 · Season 7 | Exact release; supplied SDK actions audited |
+| **19.01** | Chapter 3 · Season 1 | Exact release; supplied SDK actions audited |
 | **19.10** | Chapter 3 · Season 1 | Exact release 19.10 |
 | **24.20** | Chapter 4 · Season 2 | Exact release 24.20 |
 | **26.30** | Chapter 4 · Season 4 | Exact release 26.30 |
@@ -86,17 +88,17 @@ Bots act during an active match. Ranged weapons from their starting loadout or s
 
 **Automatic** uses the loaded game's version. An explicit selection restricts bot spawning and AI: a version mismatch blocks both. The selection is saved immediately, even when **Auto Host** and **Save Settings** are off.
 
-Selecting a card does not install a different Fortnite version. Legacy releases use the existing dynamic SDK path. The six newly listed exact releases have an additional bot-action check before spawning; incompatible reflection blocks the spawn and reports the reason in the server log. Their supplied source archives and API evidence are recorded in [Legacy SDK references](docs/LEGACY_SDK_REFERENCES.md). The season-wide options remain available, including the previously audited **14.60** SDK.
+Selecting a card does not install a different Fortnite version. Legacy releases use the existing dynamic SDK path. The seven exact releases with supplied SDK references have an additional bot-action check before spawning; incompatible reflection blocks the spawn and reports the reason in the server log. Their supplied source archives and API evidence are recorded in [Legacy SDK references](docs/LEGACY_SDK_REFERENCES.md). The season-wide options remain available, including the previously audited **14.60** SDK.
 
 > **Verification status:** the Windows x64 DLL builds, and regression tests and interface checks have passed. Live game sessions on these versions have not been tested. A menu option does not establish working gameplay on every patch. [Read the compatibility notes →](docs/COMPATIBILITY.md)
 
 ## Recent changes
 
-- Added exact **10.40**, **11.31**, **12.41**, **12.61**, **15.50**, and **17.30** choices without changing existing saved selection IDs.
-- Checked legacy action signatures against all six supplied source archives and added a runtime bot-action preflight.
-- Improved smooth aiming and alignment checks, with projectile lead only when the weapon exposes a usable projectile speed.
-- Improved trigger timing and reload handling while preserving the game's normal weapon and ability functions.
-- Expanded the version-card layout for the additional choices.
+- Added exact **19.01** alongside the previous targets, preserving every saved selection ID and checking bot actions against the supplied SDK.
+- Reduced aim lag when following moving targets and improved short-horizon projectile interception.
+- Made engagement distance and burst length respond to native weapon properties. Bots approach, retreat, strafe, reposition while reloading, and pause for distant shots.
+- Added alignment checks between aim updates while retaining native cooldowns, spread, ammunition, and reload abilities.
+- Removed forced bot portraits from the map and minimap, including cosmetic retries and previously configured icons. Native game reveals, pings, and weapon-noise indicators keep their normal behavior.
 
 AI does not yet loot, build, or navigate around obstacles. See the [roadmap](docs/ROADMAP.md) for other known issues.
 

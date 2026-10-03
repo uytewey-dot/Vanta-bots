@@ -23,7 +23,8 @@ namespace PlayerBotVersionSelection
         Fortnite1261 = 12,
         Fortnite1550 = 13,
         Fortnite1730 = 14,
-        Count = 15
+        Fortnite1901 = 15,
+        Count = 16
     };
 
     struct FOption
@@ -50,13 +51,14 @@ namespace PlayerBotVersionSelection
         { "Fortnite 12.41", "12.41", 12.41 },
         { "Fortnite 12.61", "12.61", 12.61 },
         { "Fortnite 15.50", "15.50", 15.50 },
-        { "Fortnite 17.30", "17.30", 17.30 }
+        { "Fortnite 17.30", "17.30", 17.30 },
+        { "Fortnite 19.01", "19.01", 19.01 }
     };
 
     // Keep stored IDs stable while presenting releases in chronological order.
     inline constexpr int DisplayOrder[Count] = {
         Automatic, Fortnite1040, Fortnite1131, Chapter2Season2, Fortnite1241, Fortnite1261,
-        Chapter2Season4, Fortnite1550, Fortnite1730, Fortnite1910, Fortnite2420, Fortnite2630,
+        Chapter2Season4, Fortnite1550, Fortnite1730, Fortnite1901, Fortnite1910, Fortnite2420, Fortnite2630,
         Fortnite2830, Fortnite3141, Fortnite3211
     };
 
@@ -87,7 +89,7 @@ namespace PlayerBotVersionSelection
     {
         if (!std::isfinite(CurrentVersion))
             return false;
-        for (int Selection = Fortnite1040; Selection <= Fortnite1730; ++Selection)
+        for (int Selection = Fortnite1040; Selection <= Fortnite1901; ++Selection)
             if (CurrentVersion == Options[Selection].Version)
                 return true;
         return false;

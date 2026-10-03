@@ -46,12 +46,12 @@ An exit code of `0` means the test passed.
 
 ## Portable tests on Linux
 
-The profile and version-selection tests require a C++20-capable `g++`. They do not require Fortnite.
+The profile, version-selection, combat, and map-icon tests require a C++20-capable `g++`. They do not require Fortnite.
 
 ```sh
 set -eu
 vanta_test_dir="$(mktemp -d)"
-for test in Fortnite3141ProfileTests FortniteShippingProfileTests Fortnite3211DecodeTests PlayerBotVersionSelectionTests PlayerBotCombatTests; do
+for test in Fortnite3141ProfileTests FortniteShippingProfileTests Fortnite3211DecodeTests PlayerBotVersionSelectionTests PlayerBotCombatTests PlayerBotMapIconTests; do
   g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
     "Magnesium/Tests/$test.cpp" -o "$vanta_test_dir/$test"
@@ -63,20 +63,27 @@ done
 
 ## Completed checks
 
-The legacy-version and combat update adds regression coverage for all six new
-exact selections, persisted ID stability, the legacy reference/preflight set,
-and pure combat calculations. Combat tests exercise angle wrapping, bounded
-turning, invalid numeric inputs, reaction/alignment decisions, projectile lead,
-and trigger cadence. GitHub Actions builds the DLL on Windows and runs these
-alongside the existing regression executables. Source evidence for the six
-supplied legacy SDKs is recorded in [Legacy SDK references](LEGACY_SDK_REFERENCES.md).
+The 19.01 update covers exact selection, separation from 19.10, persisted ID
+stability, and the seven-version reference/preflight set. Source evidence for
+the supplied SDKs is recorded in [Legacy SDK references](LEGACY_SDK_REFERENCES.md).
+Combat tests exercise angle wrapping, bounded turning, moving-target tracking
+at 20/30/60 Hz, analytic projectile interception, native range fallbacks,
+approach/retreat hysteresis, planted firing windows, reload movement, settling,
+and trigger cadence. The tracking simulation compares the new follower with the
+previous smoothing behavior and checks that it opens the firing gate.
 
-The update passed a full Windows x64 cross-build and link, all five portable
-GCC regression executables with ASan/UBSan, and actual Dear ImGui interaction
-checks for all fourteen version/season cards in one to four columns. The final
-combat translation unit was rebuilt and the DLL relinked after the last review
-fix. The tracking tests include targets moving at 600 and 800 cm/s at 10 and
-50 metres; they verify that smooth aiming can actually open the firing gate.
+Map-icon tests cover weak handle generations, address reuse, registration before
+possession, repeated callbacks, human possession, world resets, and bot counts
+beyond the portrait retry cache capacity. These are identity/lifecycle tests;
+actual minimap replication still requires a game session.
+
+The update passed a full Windows x64 cross-build and link of 47 C++ translation
+units including the PCH, all six portable GCC executables with strict warnings
+and ASan/UBSan, and actual Dear ImGui interaction checks for all fifteen target
+cards in one to four columns. The UI checks include persistence, mismatch
+restrictions, scrolling, optional animations, and 150% scaling. GitHub Actions
+builds the DLL with MSVC and runs seven regression executables, including the
+Windows Arena test. Check the matching commit's run for its native build result.
 
 The bot changes in commit `22b9d9d` were checked with:
 

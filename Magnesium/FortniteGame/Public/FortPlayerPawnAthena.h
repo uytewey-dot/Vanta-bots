@@ -606,6 +606,10 @@ public:
     static bool ReviveFromDBNOCompat(AFortPlayerPawnAthena* Pawn, AController* EventInstigator,
         bool bNativeTransitionAlreadyAttempted = false);
 
+    // Synthetic spawn identity must be recorded before possession/cosmetics.
+    static void SuppressBotMapIcon(AFortPlayerControllerAthena* Controller,
+        AFortPlayerPawnAthena* Pawn);
+
     static bool EnsurePlayerMapIcon(AFortPlayerControllerAthena* Controller,
         AFortPlayerPawnAthena* Pawn, const UObject* PreferredCharacterDefinition = nullptr);
 

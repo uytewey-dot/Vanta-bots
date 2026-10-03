@@ -302,7 +302,7 @@ namespace MagnesiumUI
             "Chapter 2 / Remix", "Chapter 3 / Season 1", "Chapter 4 / Season 2", "Chapter 4 / Season 4",
             "Chapter 2 / Season 2", "Chapter 2 / Season 4", "Chapter 1 / Season X",
             "Chapter 2 / Season 1", "Chapter 2 / Season 2", "Chapter 2 / Season 2",
-            "Chapter 2 / Season 5", "Chapter 2 / Season 7" };
+            "Chapter 2 / Season 5", "Chapter 2 / Season 7", "Chapter 3 / Season 1" };
         for (int I = 1; I < P::Count; ++I)
         {
             const int Id = P::DisplayOrder[I];

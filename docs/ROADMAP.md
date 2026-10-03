@@ -12,10 +12,14 @@
 
 ## Current AI limitations
 
-Bots can move, select targets, aim smoothly, check line of sight and alignment, fire, and reload. Looting, building, and navigation around obstacles are not implemented yet. Projectile prediction does not model gravity or homing. Charge/release-trigger weapons require additional handling.
+Bots can track moving targets, choose weapon-appropriate distances, strafe, pause for distant shots, fire controlled bursts, and reposition while reloading. Looting, building, and navigation around obstacles are not implemented yet. Projectile prediction does not model gravity or homing. Charge/release-trigger weapons require additional handling. Persistent Vanta bot portraits are suppressed; native game reveal and weapon-noise indicators retain their normal behavior.
 
 ## Recent work
 
+- [x] Add exact 19.01 with an SDK action audit and stable saved selection IDs.
+- [x] Improve moving-target tracking, projectile interception, weapon-aware bursts, and shot stability.
+- [x] Add approach/retreat hysteresis, strafing, reload movement, and periodic planted firing windows.
+- [x] Suppress Vanta's bot map/minimap icons before possession and during cosmetic retries.
 - [x] Add exact 10.40, 11.31, 12.41, 12.61, 15.50, and 17.30 targets, preserving saved selection IDs.
 - [x] Audit supplied legacy SDK actions and check their reflected contracts before spawning.
 - [x] Improve aim tracking, alignment checks, and weapon firing/reload timing.
