@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">Vanta Bots — Server Control</title>
+  <desc id="desc">A dark cover with a mint V logo. C++, Windows x64, and eight version targets.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#101e2a"/>
+      <stop offset="1" stop-color="#090f16"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#73ead1"/>
+      <stop offset="1" stop-color="#36bfa8"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#50d6bb" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#50d6bb" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#a9d4dd" stroke-opacity=".04"/>
+    </pattern>
+    <clipPath id="bounds"><rect width="1280" height="360" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#bounds)">
+    <rect width="1280" height="360" fill="url(#background)"/>
+    <rect width="1280" height="360" fill="url(#grid)"/>
+    <ellipse cx="1030" cy="178" rx="350" ry="290" fill="url(#glow)"/>
+    <g fill="none" stroke="#58d7bd" stroke-opacity=".13">
+      <circle cx="1055" cy="176" r="145"/>
+      <circle cx="1055" cy="176" r="190"/>
+      <path d="M818 176H870M1241 176H1290M1055 -20V-4M1055 357V390"/>
+    </g>
+    <g font-family="Segoe UI, Arial, sans-serif">
+      <rect x="58" y="49" width="8" height="8" rx="4" fill="#53d8bc"/>
+      <text x="79" y="60" fill="#a2bdc8" font-size="15" letter-spacing="3">YOUR SERVER. YOUR RULES.</text>
+      <text x="54" y="166" fill="#edf5f8" font-size="76" font-weight="700" letter-spacing="1">VANTA BOTS</text>
+      <text x="59" y="211" fill="#8ea8b8" font-size="22" letter-spacing="4">FORTNITE / BOT CONTROL</text>
+      <g font-size="14" font-weight="600" text-anchor="middle">
+        <rect x="58" y="268" width="75" height="36" rx="18" fill="#1a3436"/>
+        <text x="95.5" y="291" fill="#61dfc7">C++</text>
+        <rect x="145" y="268" width="152" height="36" rx="18" fill="#192630"/>
+        <text x="221" y="291" fill="#becdd7">WINDOWS x64</text>
+        <rect x="309" y="268" width="194" height="36" rx="18" fill="#192630"/>
+        <text x="406" y="291" fill="#becdd7">8 VERSION TARGETS</text>
+      </g>
+      <rect x="963" y="84" width="184" height="184" rx="38" fill="url(#mint)"/>
+      <text x="1055" y="202" fill="#092c25" text-anchor="middle" font-size="96" font-weight="700">V</text>
+      <text x="1055" y="241" fill="#124238" text-anchor="middle" font-size="12" letter-spacing="2">VANTA</text>
+    </g>
+    <rect x=".5" y=".5" width="1279" height="359" rx="24" fill="none" stroke="#273845"/>
+  </g>
+</svg>

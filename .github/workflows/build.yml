@@ -1,0 +1,51 @@
+name: Build Vanta Bots
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build Windows x64 DLL
+        run: msbuild Magnesium.sln /m:2 /p:Configuration=Release /p:Platform=x64
+      - name: Run portable regression tests
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /std:c++20 /EHsc Magnesium\Tests\ArenaTelemetryWireTests.cpp /Fe:arena-tests.exe
+          if errorlevel 1 exit /b 1
+          arena-tests.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc Magnesium\Tests\Fortnite3141ProfileTests.cpp /Fe:fortnite3141-profile-tests.exe
+          if errorlevel 1 exit /b 1
+          fortnite3141-profile-tests.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc Magnesium\Tests\FortniteShippingProfileTests.cpp /Fe:fortnite-shipping-profile-tests.exe
+          if errorlevel 1 exit /b 1
+          fortnite-shipping-profile-tests.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc Magnesium\Tests\Fortnite3211DecodeTests.cpp /Fe:fortnite3211-decode-tests.exe
+          if errorlevel 1 exit /b 1
+          fortnite3211-decode-tests.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc Magnesium\Tests\PlayerBotVersionSelectionTests.cpp /Fe:player-bot-version-selection-tests.exe
+          if errorlevel 1 exit /b 1
+          player-bot-version-selection-tests.exe
+          if errorlevel 1 exit /b 1
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vanta-Bots-Windows-x64
+          path: |
+            x64/Release/Magnesium.dll
+            x64/Release/Magnesium.pdb
+          if-no-files-found: error
