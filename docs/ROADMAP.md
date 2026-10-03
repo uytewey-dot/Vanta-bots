@@ -12,10 +12,13 @@
 
 ## Current AI limitations
 
-Bots can move, select targets, check line of sight, fire, and reload. Looting, building, and navigation around obstacles are not implemented yet.
+Bots can move, select targets, aim smoothly, check line of sight and alignment, fire, and reload. Looting, building, and navigation around obstacles are not implemented yet. Projectile prediction does not model gravity or homing. Charge/release-trigger weapons require additional handling.
 
 ## Recent work
 
+- [x] Add exact 10.40, 11.31, 12.41, 12.61, 15.50, and 17.30 targets, preserving saved selection IDs.
+- [x] Audit supplied legacy SDK actions and check their reflected contracts before spawning.
+- [x] Improve aim tracking, alignment checks, and weapon firing/reload timing.
 - [x] Add 12.xx and 14.xx season targets.
 - [x] Improve ammo loadouts and reload support for older SDKs.
 - [x] Persist version selection and block bots when the loaded game does not match.

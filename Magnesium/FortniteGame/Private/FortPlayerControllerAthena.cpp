@@ -20920,6 +20920,23 @@ cheat shortcmds <items/objects> - Lists all short names for cheat give/spawn
                     return;
                 }
 
+                // These releases were checked against the supplied legacy SDKs.
+                // Validate this running game's reflection before creating any
+                // actors; a selector entry alone is not proof of a matching ABI.
+                if (PlayerBotVersionSelection::HasLegacyReference(VersionInfo.FortniteVersion))
+                {
+                    std::string BotActionError;
+                    if (!PlayerBotRuntime::ValidateActions(BotActionError))
+                    {
+                        SDK::DbgLog("[SpawnBot] legacy action preflight failed version=%.2f: %s\n",
+                            VersionInfo.FortniteVersion, BotActionError.c_str());
+                        PlayerController->ClientMessage(FString(
+                            L"Bot action compatibility check failed. See the server log for the missing or incompatible action."),
+                            FName(), 1.f);
+                        return;
+                    }
+                }
+
                 auto CallerController = PlayerController;
                 int Count = 1;
                 std::string WeaponArg = "";

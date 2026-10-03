@@ -51,7 +51,7 @@ The profile and version-selection tests require a C++20-capable `g++`. They do n
 ```sh
 set -eu
 vanta_test_dir="$(mktemp -d)"
-for test in Fortnite3141ProfileTests FortniteShippingProfileTests Fortnite3211DecodeTests PlayerBotVersionSelectionTests; do
+for test in Fortnite3141ProfileTests FortniteShippingProfileTests Fortnite3211DecodeTests PlayerBotVersionSelectionTests PlayerBotCombatTests; do
   g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
     "Magnesium/Tests/$test.cpp" -o "$vanta_test_dir/$test"
@@ -62,6 +62,21 @@ done
 `ArenaTelemetryWireTests` uses MSVC's `sprintf_s` formatting function and runs in Windows CI. Running it on Linux requires a standard-library compatibility adapter.
 
 ## Completed checks
+
+The legacy-version and combat update adds regression coverage for all six new
+exact selections, persisted ID stability, the legacy reference/preflight set,
+and pure combat calculations. Combat tests exercise angle wrapping, bounded
+turning, invalid numeric inputs, reaction/alignment decisions, projectile lead,
+and trigger cadence. GitHub Actions builds the DLL on Windows and runs these
+alongside the existing regression executables. Source evidence for the six
+supplied legacy SDKs is recorded in [Legacy SDK references](LEGACY_SDK_REFERENCES.md).
+
+The update passed a full Windows x64 cross-build and link, all five portable
+GCC regression executables with ASan/UBSan, and actual Dear ImGui interaction
+checks for all fourteen version/season cards in one to four columns. The final
+combat translation unit was rebuilt and the DLL relinked after the last review
+fix. The tracking tests include targets moving at 600 and 800 cm/s at 10 and
+50 metres; they verify that smooth aiming can actually open the firing gate.
 
 The bot changes in commit `22b9d9d` were checked with:
 

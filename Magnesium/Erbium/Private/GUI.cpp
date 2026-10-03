@@ -12399,7 +12399,7 @@ void GUI::Init()
         {
             SectionHeader("Bot Version", SectionWidth);
             BeginSectionBody();
-            ImGui::TextColored(MagnesiumUI::Muted(), "Choose a release. Your selection is saved automatically.");
+            ImGui::TextColored(MagnesiumUI::Muted(), "Choose a release or season. Your selection is saved automatically.");
             int TargetVersion = FConfiguration::BotTargetVersion.load(std::memory_order_acquire);
             const float BotPanelWidth = (std::max)(MagnesiumUI::S(120.f), SectionWidth - MagnesiumUI::S(20.f));
             if (MagnesiumUI::VersionPicker(TargetVersion, BotPanelWidth))

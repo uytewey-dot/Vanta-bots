@@ -490,6 +490,9 @@
     <ClInclude Include="Erbium\Support\Public\PlayerBotVersionSelection.h">
       <Filter>Magnesium\Support\Public</Filter>
     </ClInclude>
+    <ClInclude Include="Erbium\Support\Public\PlayerBotCombat.h">
+      <Filter>Magnesium\Support\Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Erbium\Support\Private\VersionFeatureAdapter.cpp">
@@ -521,6 +524,9 @@
       <Filter>Magnesium\Tests</Filter>
     </None>
     <None Include="Tests\PlayerBotVersionSelectionTests.cpp">
+      <Filter>Magnesium\Tests</Filter>
+    </None>
+    <None Include="Tests\PlayerBotCombatTests.cpp">
       <Filter>Magnesium\Tests</Filter>
     </None>
   </ItemGroup>

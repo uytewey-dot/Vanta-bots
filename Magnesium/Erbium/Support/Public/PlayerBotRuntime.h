@@ -11,7 +11,8 @@ class UFortWorldItem;
 class PlayerBotRuntime
 {
 public:
-    // Checks supported shipping builds' reflected layouts without executing game actions.
+    // Checks reflected bot action layouts without executing game actions.
+    // Supports legacy float vectors and shipping double vectors.
     static bool ValidateActions(std::string& Error);
     // Spawn loadouts start with a full magazine and up to three spare magazines.
     static UFortWorldItem* GiveSpawnItem(AFortPlayerControllerAthena* Controller,

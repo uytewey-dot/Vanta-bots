@@ -295,12 +295,14 @@ namespace MagnesiumUI
             Selection = P::Automatic;
         }
         ImGui::PopID();
-        const int Columns = Width >= S(510.f) ? 3 : (Width >= S(320.f) ? 2 : 1);
+        const int Columns = Width >= S(710.f) ? 4 : (Width >= S(530.f) ? 3 : (Width >= S(350.f) ? 2 : 1));
         const float Gap = S(10.f);
         const float TileWidth = (Width - Gap * (Columns - 1)) / Columns;
         const char* Subtitles[P::Count] = { "Current game", "Chapter 5 / Season 1", "Chapter 5 / Season 4",
             "Chapter 2 / Remix", "Chapter 3 / Season 1", "Chapter 4 / Season 2", "Chapter 4 / Season 4",
-            "Chapter 2 / Season 2", "Chapter 2 / Season 4" };
+            "Chapter 2 / Season 2", "Chapter 2 / Season 4", "Chapter 1 / Season X",
+            "Chapter 2 / Season 1", "Chapter 2 / Season 2", "Chapter 2 / Season 2",
+            "Chapter 2 / Season 5", "Chapter 2 / Season 7" };
         for (int I = 1; I < P::Count; ++I)
         {
             const int Id = P::DisplayOrder[I];
@@ -310,6 +312,15 @@ namespace MagnesiumUI
             {
                 Changed = Selection != Id;
                 Selection = Id;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(P::Options[Id].Label);
+                ImGui::TextUnformatted(P::Options[Id].EndVersionExclusive > 0.0
+                    ? "Matches every release in this season."
+                    : "Matches this exact release only.");
+                ImGui::EndTooltip();
             }
             ImGui::PopID();
         }

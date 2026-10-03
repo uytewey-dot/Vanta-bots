@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "../Public/PlayerBotRuntime.h"
+#include "../Public/PlayerBotCombat.h"
 #include "../Public/VersionFeatureAdapter.h"
 #include "../Public/FaultGuard.h"
 #include "../Public/AIDebugLogger.h"
@@ -15,7 +16,7 @@ namespace
     constexpr uint64 ParameterFlag = 0x80;
     constexpr uint64 ReturnFlag = 0x400;
     constexpr float PerceptionInterval = 0.25f;
-    constexpr float ActionInterval = 0.1f;
+    constexpr float ActionInterval = 0.05f;
     constexpr int ParticipantScanLimit = 512;
 
     bool IsAIEnabledForCurrentGame() noexcept
@@ -29,14 +30,19 @@ namespace
         TWeakObjectPtr<AFortPlayerControllerAthena> Controller;
         TWeakObjectPtr<AFortPlayerPawnAthena> FiringPawn;
         TWeakObjectPtr<AFortPlayerPawnAthena> Target;
+        TWeakObjectPtr<AFortPlayerPawnAthena> CombatPawn;
+        TWeakObjectPtr<AFortWeapon> CombatWeapon;
         bool Firing = false;
+        bool StopRequested = false;
         bool Removed = false;
         bool Chase = false;
         float NextPerception = 0.f;
         float NextAction = 0.f;
         float NextReload = 0.f;
-        float BurstEnd = 0.f;
-        float NextTrigger = 0.f;
+        float LastTick = 0.f;
+        PlayerBotCombat::MotionTracker Motion;
+        PlayerBotCombat::AimWindow AimWindow;
+        PlayerBotCombat::TriggerCadence Trigger;
     };
 
     std::vector<FBot> Bots;
@@ -146,19 +152,25 @@ namespace
             return Function && Dispatch(Object, Function, Buffer.data());
         }
 
-        bool ReadReturn(void* Value, size_t Size) const
+        bool ReadField(const char* Name, void* Value, size_t Size, bool Return = false) const
         {
             if (!Function)
                 return false;
             for (const auto& Parameter : Parameters.NameOffsetMap)
-                if (Parameter.Name == "ReturnValue" &&
-                    (Parameter.PropertyFlags & ReturnFlag) && Parameter.ElementSize == Size &&
+                if (Parameter.Name == Name && (Parameter.PropertyFlags & ParameterFlag) &&
+                    ((Parameter.PropertyFlags & ReturnFlag) != 0) == Return &&
+                    Parameter.ElementSize == Size &&
                     Parameter.Offset <= Buffer.size() && Size <= Buffer.size() - Parameter.Offset)
                 {
                     memcpy(Value, Buffer.data() + Parameter.Offset, Size);
                     return true;
                 }
             return false;
+        }
+
+        bool ReadReturn(void* Value, size_t Size) const
+        {
+            return ReadField("ReturnValue", Value, Size, true);
         }
     };
 
@@ -239,9 +251,12 @@ namespace
 
     bool ValidateActionsInternal(std::string& Error)
     {
-        // Shipping 28.30, 31.41 and 32.11 expose the same bot action parameter sizes.
-        Error = "bot actions: expected shipping vector/rotation, pointer and ability-handle sizes";
-        if (FVector::Size() != 24 || FRotator::Size() != 24 || sizeof(AActor*) != 8 ||
+        // Legacy UE4 uses 12-byte float vectors; newer LWC builds use 24-byte
+        // doubles. Every field below must match the active SDK's reflected size.
+        const size_t VectorSize = FVector::Size();
+        const size_t RotationSize = FRotator::Size();
+        Error = "bot actions: expected vector/rotation, pointer and ability-handle sizes";
+        if ((VectorSize != 12 && VectorSize != 24) || RotationSize != VectorSize || sizeof(AActor*) != 8 ||
             sizeof(FGameplayAbilitySpecHandle) != 4)
             return false;
         auto Pawn = ActionDefault(SDK::FindClass("FortPlayerPawnAthena"),
@@ -283,25 +298,32 @@ namespace
             return false;
 
         if (!ActionSchema(Pawn, "FortPlayerPawnAthena", "K2_GetActorLocation",
-                { "ReturnValue" }, { { "ReturnValue", 24, true } }, Error) ||
+                { "ReturnValue" }, { { "ReturnValue", VectorSize, true } }, Error) ||
             !ActionSchema(Pawn, "FortPlayerPawnAthena", "AddMovementInput",
                 { "WorldDirection", "ScaleValue", "bForce" },
-                { { "WorldDirection", 24 }, { "ScaleValue", 4 }, { "bForce", 1 } }, Error) ||
+                { { "WorldDirection", VectorSize }, { "ScaleValue", 4 }, { "bForce", 1 } }, Error) ||
+            !ActionSchema(Controller, "FortPlayerControllerAthena", "GetControlRotation",
+                { "ReturnValue" }, { { "ReturnValue", RotationSize, true } }, Error) ||
             !ActionSchema(Controller, "FortPlayerControllerAthena", "SetControlRotation",
-                { "NewRotation" }, { { "NewRotation", 24 } }, Error) ||
+                { "NewRotation" }, { { "NewRotation", RotationSize } }, Error) ||
             !ActionSchema(Controller, "FortPlayerControllerAthena", "LineOfSightTo",
                 { "Other", "ViewPoint", "bAlternateChecks", "ReturnValue" },
-                { { "Other", 8 }, { "ViewPoint", 24 }, { "bAlternateChecks", 1 },
+                { { "Other", 8 }, { "ViewPoint", VectorSize }, { "bAlternateChecks", 1 },
                     { "ReturnValue", 1, true } }, Error) ||
             !ActionSchema(Pawn, "FortPlayerPawnAthena", "PawnStartFire",
                 { "FireModeNum" }, { { "FireModeNum", 1 } }, Error) ||
             !ActionSchema(Pawn, "FortPlayerPawnAthena", "PawnStopFire",
                 { "FireModeNum" }, { { "FireModeNum", 1 } }, Error) ||
             !ActionSchema(Pawn, "FortPlayerPawnAthena", "GetHealth",
-                { "ReturnValue" }, { { "ReturnValue", 4, true } }, Error) ||
-            !ActionSchema(AbilitySystem, "AbilitySystemComponent", "TryActivateAbility",
+                { "ReturnValue" }, { { "ReturnValue", 4, true } }, Error))
+            return false;
+        if (!ActionSchema(AbilitySystem, "AbilitySystemComponent", "TryActivateAbility",
                 { "AbilityToActivate", "bAllowRemoteActivation", "ReturnValue" },
                 { { "AbilityToActivate", 4 }, { "bAllowRemoteActivation", 1 },
+                    { "ReturnValue", 1, true } }, Error) &&
+            !ActionSchema(AbilitySystem, "AbilitySystemComponent", "TryActivateAbilityByClass",
+                { "InAbilityToActivate", "bAllowRemoteActivation", "ReturnValue" },
+                { { "InAbilityToActivate", 8 }, { "bAllowRemoteActivation", 1 },
                     { "ReturnValue", 1, true } }, Error))
             return false;
         Error.clear();
@@ -360,13 +382,31 @@ namespace
     {
         if (Bot.Firing)
         {
+            Bot.StopRequested = true;
             auto Pawn = Bot.FiringPawn.Get();
             if (VersionFeatureAdapter::IsLiveActor(Pawn) && Pawn->HasController() &&
                 Pawn->Controller == Bot.Controller.Get() && !Fire(Pawn, false))
                 return; // Keep retrying a failed native stop while this pawn exists.
+            Bot.Trigger.Released(Bot.LastTick);
         }
         Bot.Firing = false;
+        Bot.StopRequested = false;
         Bot.FiringPawn = TWeakObjectPtr<AFortPlayerPawnAthena>();
+    }
+
+    void ResetAim(FBot& Bot)
+    {
+        Bot.Motion.Reset();
+        Bot.AimWindow.Reset();
+        Bot.Chase = false;
+        Bot.NextAction = 0.f;
+    }
+
+    void LoseTarget(FBot& Bot)
+    {
+        Stop(Bot);
+        ResetAim(Bot);
+        Bot.Target = TWeakObjectPtr<AFortPlayerPawnAthena>();
     }
 
     bool Move(AFortPlayerPawnAthena* Pawn, const FVector& From, const FVector& To)
@@ -385,16 +425,100 @@ namespace
             Call.Field("bForce", &Force, sizeof(Force)) && Call.Invoke();
     }
 
-    bool Aim(AFortPlayerControllerAthena* Controller, const FVector& From, const FVector& To)
+    PlayerBotCombat::Vector CombatVector(const FVector& Value)
     {
-        constexpr double Degrees = 57.29577951308232;
-        const double X = To.X - From.X;
-        const double Y = To.Y - From.Y;
-        const double Z = To.Z - From.Z;
-        const FRotator Rotation(std::atan2(Z, std::sqrt(X * X + Y * Y)) * Degrees,
-            std::atan2(Y, X) * Degrees, 0.);
+        return { Value.X, Value.Y, Value.Z };
+    }
+
+    template<typename T>
+    bool OptionalValue(const UObject* Object, const char* Name, T& Value)
+    {
+        if (!VersionFeatureAdapter::IsLiveObject(Object) || !Object->GetFunction(Name))
+            return false;
+        FNativeCall Call(Object, Name, { "ReturnValue" });
+        return Call.Field("ReturnValue", nullptr, sizeof(T), true) && Call.Invoke() &&
+            Call.ReadReturn(&Value, sizeof(T));
+    }
+
+    FVector Eyes(AFortPlayerPawnAthena* Pawn, const FVector& Position)
+    {
+        if (Pawn->GetFunction("GetActorEyesViewPoint"))
+        {
+            FVector View;
+            FRotator Rotation;
+            FNativeCall Call(Pawn, "GetActorEyesViewPoint", { "OutLocation", "OutRotation" });
+            if (Call.Field("OutLocation", nullptr, FVector::Size()) &&
+                Call.Field("OutRotation", nullptr, FRotator::Size()) && Call.Invoke() &&
+                Call.ReadField("OutLocation", &View, FVector::Size()) &&
+                Call.ReadField("OutRotation", &Rotation, FRotator::Size()) &&
+                PlayerBotCombat::Finite(CombatVector(View)) &&
+                (View - Position).SizeSquared() <= 400. * 400.)
+                return View;
+        }
+        const float RawHeight = Pawn->HasBaseEyeHeight() ? Pawn->BaseEyeHeight : 64.f;
+        const double Height = std::isfinite(RawHeight) ? (std::clamp)(RawHeight, 20.f, 120.f) : 64.f;
+        return FVector(Position.X, Position.Y, Position.Z + Height);
+    }
+
+    bool ControlRotation(AFortPlayerControllerAthena* Controller, PlayerBotCombat::Rotation& Value)
+    {
+        FRotator Rotation;
+        FNativeCall Call(Controller, "GetControlRotation", { "ReturnValue" });
+        if (!Call.Field("ReturnValue", nullptr, FRotator::Size(), true) || !Call.Invoke() ||
+            !Call.ReadReturn(&Rotation, FRotator::Size()) ||
+            !std::isfinite(Rotation.Pitch) || !std::isfinite(Rotation.Yaw))
+            return false;
+        Value = { Rotation.Pitch, Rotation.Yaw };
+        return true;
+    }
+
+    bool Aim(AFortPlayerControllerAthena* Controller, const FVector& From,
+        const PlayerBotCombat::Vector& To, double DeltaSeconds)
+    {
+        PlayerBotCombat::Rotation Current, Desired, Smoothed;
+        if (!ControlRotation(Controller, Current) ||
+            !PlayerBotCombat::LookAt(CombatVector(From), To, Desired) ||
+            !PlayerBotCombat::SmoothAim(Current, Desired, DeltaSeconds, Smoothed))
+            return false;
+        const FRotator Rotation(Smoothed.Pitch, Smoothed.Yaw, 0.);
         FNativeCall Call(Controller, "SetControlRotation", { "NewRotation" });
-        return Call.Field("NewRotation", &Rotation, FRotator::Size()) && Call.Invoke();
+        // Read back the rotation so a rejected/clamped native write cannot open
+        // the firing gate merely because the desired math result was aligned.
+        return Call.Field("NewRotation", &Rotation, FRotator::Size()) && Call.Invoke() &&
+            ControlRotation(Controller, Current) && PlayerBotCombat::Aligned(Current, Desired,
+                PlayerBotCombat::Length(PlayerBotCombat::Difference(To, CombatVector(From))));
+    }
+
+    PlayerBotCombat::TriggerPlan WeaponTrigger(AFortWeapon* Weapon, double Distance)
+    {
+        uint8 RawType = 255;
+        auto Mode = PlayerBotCombat::TriggerMode::Unknown;
+        if (OptionalValue(Weapon, "GetWeaponDataTriggerType", RawType))
+        {
+            // EFortWeaponTriggerType is uint8 in all six audited legacy SDKs.
+            // Charge/release weapons need their own cancellation/charge lifecycle.
+            Mode = RawType == 0 ? PlayerBotCombat::TriggerMode::OnPress :
+                RawType == 1 ? PlayerBotCombat::TriggerMode::Automatic :
+                PlayerBotCombat::TriggerMode::Unsupported;
+        }
+        float Rate = 0.f;
+        OptionalValue(Weapon, "GetFiringRate", Rate);
+        return PlayerBotCombat::PlanTrigger(Mode, Rate, Distance);
+    }
+
+    double ProjectileSpeed(AFortWeapon* Weapon)
+    {
+        uint8 Projectile = 0;
+        if (!OptionalValue(Weapon, "IsProjectileWeapon", Projectile) || !Projectile)
+            return 0.; // Hitscan and unknown weapons always aim at the current body.
+        float Speed = 0.f;
+        const float ChargePercent = 0.f;
+        FNativeCall Call(Weapon, "GetProjectileSpeed", { "ChargePercent", "ReturnValue" });
+        if (!Call.Field("ChargePercent", &ChargePercent, sizeof(ChargePercent)) ||
+            !Call.Field("ReturnValue", nullptr, sizeof(Speed), true) || !Call.Invoke() ||
+            !Call.ReadReturn(&Speed, sizeof(Speed)) || !std::isfinite(Speed))
+            return 0.;
+        return Speed;
     }
 
     bool Visible(AFortPlayerControllerAthena* Controller, AFortPlayerPawnAthena* Other,
@@ -435,9 +559,11 @@ namespace
     }
 
     AFortPlayerPawnAthena* FindTarget(AFortGameMode* GameMode,
-        AFortPlayerPawnAthena* Pawn, const FVector& Position, double DetectionRange)
+        AFortPlayerControllerAthena* OwnController, AFortPlayerPawnAthena* Pawn,
+        const FVector& Position, const FVector& ViewPoint, double DetectionRange)
     {
         AFortPlayerPawnAthena* Best = nullptr;
+        bool BestVisible = false;
         double BestDistance = DetectionRange * DetectionRange;
         auto Scan = [&](const TArray<AActor*>& Participants)
         {
@@ -472,9 +598,14 @@ namespace
                 if (!Location(Other, OtherPosition))
                     continue;
                 const double Distance = (OtherPosition - Position).SizeSquared();
-                if (Distance < BestDistance)
+                if (!std::isfinite(Distance) || Distance > DetectionRange * DetectionRange)
+                    continue;
+                const bool CanSee = Visible(OwnController, Other, ViewPoint);
+                if (!Best || (CanSee && !BestVisible) ||
+                    (CanSee == BestVisible && Distance < BestDistance))
                 {
                     Best = Other;
+                    BestVisible = CanSee;
                     BestDistance = Distance;
                 }
             }
@@ -614,19 +745,26 @@ namespace
             VersionFeatureAdapter::IsSkinCommitPending(Pawn) ||
             (Pawn->HasbIsSkydiving() && Pawn->bIsSkydiving))
         {
-            Stop(Bot);
-            Bot.Target = TWeakObjectPtr<AFortPlayerPawnAthena>();
+            LoseTarget(Bot);
             return;
         }
-        if (Bot.Firing && Now >= Bot.BurstEnd)
+        if (Bot.CombatPawn.Get() != Pawn)
+        {
+            LoseTarget(Bot);
+            Bot.CombatPawn = TWeakObjectPtr<AFortPlayerPawnAthena>(Pawn);
+            Bot.CombatWeapon = TWeakObjectPtr<AFortWeapon>();
+            Bot.NextReload = 0.f;
+        }
+        if (Bot.StopRequested || (Bot.Firing && Bot.Trigger.ShouldRelease(Now)))
         {
             Stop(Bot);
-            Bot.NextTrigger = Now + 0.1f;
+            if (Bot.Firing)
+                return; // A failed stop must never be followed by start or reload.
         }
         FVector Position;
         if (!Location(Pawn, Position))
         {
-            Stop(Bot);
+            LoseTarget(Bot);
             return;
         }
         FVector ZoneCenter;
@@ -638,7 +776,7 @@ namespace
             const double Y = Position.Y - ZoneCenter.Y;
             if (X * X + Y * Y > double(ZoneRadius) * ZoneRadius)
             {
-                Stop(Bot);
+                LoseTarget(Bot);
                 Move(Pawn, Position, ZoneCenter);
                 return;
             }
@@ -647,66 +785,112 @@ namespace
         const float RawEngage = FConfiguration::BotAIEngageRange.load(std::memory_order_relaxed);
         if (!std::isfinite(RawDetection) || !std::isfinite(RawEngage))
         {
-            Stop(Bot);
+            LoseTarget(Bot);
             return;
         }
         const float Detection = (std::clamp)(RawDetection, 1000.f, 30000.f);
         const float Engage = (std::clamp)(RawEngage, 500.f, Detection);
+        const FVector ViewPoint = Eyes(Pawn, Position);
         auto Target = Bot.Target.Get();
-        if (Now >= Bot.NextPerception || !Hostile(Pawn, Target))
-        {
-            Target = FindTarget(GameMode, Pawn, Position, Detection);
-            Bot.Target = TWeakObjectPtr<AFortPlayerPawnAthena>(Target);
-            Bot.NextPerception = Now + PerceptionInterval;
-        }
         FVector TargetPosition;
-        if (!Target || !Hostile(Pawn, Target) || !Location(Target, TargetPosition) ||
-            (TargetPosition - Position).SizeSquared() > double(Detection) * Detection)
+        bool HasTarget = Target && Hostile(Pawn, Target) && Location(Target, TargetPosition) &&
+            (TargetPosition - Position).SizeSquared() <= double(Detection) * Detection;
+        bool CanSee = HasTarget && Visible(Controller, Target, ViewPoint);
+        // Keep a visible hostile target instead of oscillating between nearby
+        // enemies. If it is hidden, prefer a visible candidate at perception rate.
+        if (Now >= Bot.NextPerception && (!HasTarget || !CanSee))
         {
-            Stop(Bot);
+            auto Candidate = FindTarget(GameMode, Controller, Pawn, Position, ViewPoint, Detection);
+            if (Candidate != Target)
+            {
+                Stop(Bot);
+                ResetAim(Bot);
+                Target = Candidate;
+                Bot.Target = TWeakObjectPtr<AFortPlayerPawnAthena>(Target);
+            }
+            Bot.NextPerception = Now + PerceptionInterval;
+            HasTarget = Target && Hostile(Pawn, Target) && Location(Target, TargetPosition) &&
+                (TargetPosition - Position).SizeSquared() <= double(Detection) * Detection;
+            CanSee = HasTarget && Visible(Controller, Target, ViewPoint);
+        }
+        if (!HasTarget)
+        {
+            LoseTarget(Bot);
             return;
         }
         const double DistanceSquared = (TargetPosition - Position).SizeSquared();
-        if (Now < Bot.NextAction)
+        if (!CanSee || DistanceSquared > double(Engage) * Engage)
         {
-            if (Bot.Chase)
-                Move(Pawn, Position, TargetPosition);
-            return;
-        }
-        Bot.NextAction = Now + ActionInterval;
-        // Native LOS uses an eye-height view point and handles blocking geometry.
-        FVector ViewPoint(Position.X, Position.Y, Position.Z +
-            (Pawn->HasBaseEyeHeight() ? Pawn->BaseEyeHeight : 64.f));
-        FVector AimPoint(TargetPosition.X, TargetPosition.Y, TargetPosition.Z + 45.);
-        const bool CanFire = DistanceSquared <= double(Engage) * Engage &&
-            Visible(Controller, Target, ViewPoint) && Aim(Controller, ViewPoint, AimPoint);
-        if (!CanFire)
-        {
-            Bot.Chase = true;
             Stop(Bot);
+            ResetAim(Bot); // No velocity or reaction-time carryover through cover.
+            Bot.Chase = true;
             Move(Pawn, Position, TargetPosition);
             return;
         }
         Bot.Chase = false;
-        auto Weapon = Pawn->HasCurrentWeapon() ? Pawn->CurrentWeapon : nullptr;
-        if (!VersionFeatureAdapter::IsLiveActor(Weapon) ||
-            !Weapon->IsA(AFortWeaponRanged::StaticClass()))
+        auto WeaponActor = Pawn->HasCurrentWeapon() ? Pawn->CurrentWeapon : nullptr;
+        auto Weapon = VersionFeatureAdapter::IsLiveActor(WeaponActor) &&
+            WeaponActor->IsA(AFortWeaponRanged::StaticClass())
+            ? static_cast<AFortWeapon*>(WeaponActor) : nullptr;
+        if (Bot.CombatWeapon.Get() != Weapon)
+        {
+            Stop(Bot);
+            ResetAim(Bot);
+            Bot.CombatWeapon = TWeakObjectPtr<AFortWeapon>(Weapon);
+            Bot.NextReload = 0.f;
+        }
+        if (!Weapon || Bot.StopRequested)
         {
             Stop(Bot);
             return;
         }
-        auto FortWeapon = static_cast<AFortWeapon*>(Weapon);
-        if (!FortWeapon->HasAmmoCount() || FortWeapon->AmmoCount <= 0)
+        uint8 IsReloading = 0;
+        if (OptionalValue(Weapon, "IsReloading", IsReloading) && IsReloading)
         {
             Stop(Bot);
-            Reload(Bot, Pawn, Now);
+            ResetAim(Bot);
             return;
         }
-        if (!Bot.Firing && Now >= Bot.NextTrigger && Fire(Pawn, true))
+        if (!Weapon->HasAmmoCount() || Weapon->AmmoCount <= 0)
         {
+            Stop(Bot);
+            ResetAim(Bot);
+            if (!Bot.Firing)
+                Reload(Bot, Pawn, Now);
+            return;
+        }
+        if (Now < Bot.NextAction)
+            return; // LOS, ownership, ammo and reload state were checked this tick.
+        Bot.NextAction = Now + ActionInterval;
+        const float RawHeight = Target->HasBaseEyeHeight() ? Target->BaseEyeHeight : 64.f;
+        const double BodyHeight = std::isfinite(RawHeight)
+            ? (std::clamp)(double(RawHeight) * 0.55, 20., 65.) : 35.;
+        const PlayerBotCombat::Vector Body{ TargetPosition.X, TargetPosition.Y,
+            TargetPosition.Z + BodyHeight };
+        Bot.Motion.Sample(Body, Now);
+        const double Delta = Bot.AimWindow.Observe(true, Now);
+        const auto Plan = WeaponTrigger(Weapon, std::sqrt(DistanceSquared));
+        const auto AimPoint = Bot.Motion.AimPoint(CombatVector(ViewPoint),
+            Plan.Supported ? ProjectileSpeed(Weapon) : 0.);
+        const bool OnTarget = Aim(Controller, ViewPoint, AimPoint, Delta);
+        if (!Plan.Supported || !OnTarget || !Bot.AimWindow.Ready(Now))
+        {
+            Stop(Bot);
+            return;
+        }
+        // Respect native cooldowns when available, including slow semiautomatic
+        // weapons. Ammo consumption, damage and spread remain entirely native.
+        float UntilNextFire = 0.f;
+        const bool NativeReady = !OptionalValue(Weapon, "GetTimeToNextFire", UntilNextFire) ||
+            (std::isfinite(UntilNextFire) && UntilNextFire <= 0.f);
+        if (!Bot.Firing && Bot.Trigger.Ready(Now) && NativeReady)
+        {
+            // Track the pawn before dispatch: a native exception may occur after
+            // partially starting an ability, and that still needs a stop/retry.
             Bot.Firing = true;
             Bot.FiringPawn = TWeakObjectPtr<AFortPlayerPawnAthena>(Pawn);
-            Bot.BurstEnd = Now + 0.5f;
+            if (!Fire(Pawn, true) || !Bot.Trigger.Pressed(Now, Plan))
+                Stop(Bot);
         }
     }
 
@@ -774,17 +958,29 @@ namespace
             return;
         ServerThread = Thread;
         const float Now = VersionFeatureAdapter::GetTimeSeconds();
-        if (!std::isfinite(Now))
+        if (!std::isfinite(Now) || Now < 0.f)
+        {
+            for (auto& Bot : Bots)
+                LoseTarget(Bot);
             return;
+        }
         InsideTick = true;
         const bool Enabled = IsAIEnabledForCurrentGame();
         for (auto Iterator = Bots.begin(); Iterator != Bots.end();)
         {
             auto Controller = Iterator->Controller.Get();
+            const bool ClockDiscontinuity = Now < Iterator->LastTick || Now - Iterator->LastTick > 0.5f;
+            Iterator->LastTick = Now;
+            if (ClockDiscontinuity)
+            {
+                LoseTarget(*Iterator);
+                Iterator->Trigger = {};
+                Iterator->NextPerception = 0.f;
+                Iterator->NextReload = 0.f;
+            }
             if (!Enabled)
             {
-                Stop(*Iterator);
-                Iterator->Target = TWeakObjectPtr<AFortPlayerPawnAthena>();
+                LoseTarget(*Iterator);
                 Iterator->NextPerception = 0.f;
                 Iterator->NextAction = 0.f;
                 Iterator->Chase = false;

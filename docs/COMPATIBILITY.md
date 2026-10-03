@@ -4,19 +4,32 @@ Open **Player Bot**, choose the target version, and turn on **Enable Bot AI**.
 The tab is available before the match starts. **Automatic (current game)** uses
 the loaded game's version. **Chapter 2 / Season 2 (12.xx)** and
 **Chapter 2 / Season 4 (14.xx)** permit patches in the selected season;
-**19.10**, **24.20**, **26.30**, **28.30**, **31.41**, or **32.11** selections
+**10.40**, **11.31**, **12.41**, **12.61**, **15.50**, **17.30**, **19.10**,
+**24.20**, **26.30**, **28.30**, **31.41**, or **32.11** selections
 permit bot spawning and AI only when that exact release is loaded. This setting
 constrains bots; it does not change the actual game release or its SDK addresses.
 The selection is saved immediately across game versions, even when **Auto Host**
 or **Save Settings** is off. Resetting preferences restores **Automatic**.
 
 Click a version card under **Bot Version** to select it. Seasons **12.xx** and
-**14.xx**, and releases **19.10**,
+**14.xx**, and releases **10.40**, **11.31**, **12.41**, **12.61**, **15.50**,
+**17.30**, **19.10**,
 **24.20**, and **26.30** use the existing dynamic SDK discovery and reflected bot
 actions, including their version-dependent vector/name layouts. The three newer
 releases use the exact shipping profiles below. Adding these choices does not
 establish live-game compatibility: server sessions and bots on each selected release
 still need testing in their corresponding game builds.
+
+The six newly added exact releases were checked against the supplied Spectra,
+MagmaGS, OGS, Asteria, and 17.30 Gameserver source archives. Their action contracts
+use 12-byte vectors/rotators, one-byte fire-mode arguments, and class-based
+ability activation for reload. Before `spawnbot` creates actors on these six
+releases, the running game's required properties and action parameters are
+validated. A missing or incompatible action blocks the command and logs the
+specific failure. This check also applies when **Automatic** or a season-wide
+choice is selected on one of those releases. It does not validate every server
+hook or replace testing a match. See [Legacy SDK references](LEGACY_SDK_REFERENCES.md)
+for archive fingerprints and evidence.
 
 Spawn a bot in game with
 `cheat spawnbot 1 scar` (or another ranged weapon from the item aliases). Bots
@@ -30,6 +43,14 @@ are saved with the server preferences.
 
 AI runs on the server tick and uses the game's movement and weapon functions.
 Bots choose hostile living participants and require line of sight before firing.
+Control rotation approaches the target at a bounded rate. Firing also requires
+aim alignment and a short reaction delay; losing the target or line of sight
+releases the trigger. Weapon firing rate and trigger type inform the firing
+cadence when exposed by reflection. Reload status prevents firing into an active
+reload. Unsupported charge/release-trigger weapons are not fired automatically.
+Projectile lead is used only when a projectile weapon reports a finite usable
+speed; hitscan weapons use direct aim. This does not model projectile gravity,
+homing, or every weapon-specific firing behavior.
 Reloads use the weapon's ability handle on the player's Ability System Component
 (ASC) when available. On Chapter 2 builds that expose only
 `TryActivateAbilityByClass`, the bot resolves the equipped weapon's granted reload
